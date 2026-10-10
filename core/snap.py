@@ -192,8 +192,47 @@ class SnapEngine:
                 SnapEngine._spline(e, oid, curves, curve_o, targets, target_o)
             elif t == "VIEWPORT":
                 SnapEngine._viewport_frame(e, oid, segs, seg_o)
+            elif t in ("DIMENSION", "ARC_DIMENSION") and targets is not None:
+                SnapEngine._dimension(e, oid, segs, seg_o, points, point_o,
+                                      targets, target_o)
         except Exception:
             pass  # malformed entity: not snappable, not fatal
+
+    @staticmethod
+    def _dimension(dim, oid, segs, seg_o, points, point_o,
+                   targets, target_o) -> None:
+        """A dimension snaps through what its block draws, as in AutoCAD:
+        its dimension and extension lines (Endpoint, Midpoint, Nearest,
+        Intersection, Perpendicular), its arrows' tips (Endpoint -- an
+        arrowhead is inserted at its tip), its definition points (Node) and
+        its text (Insertion). None of it snapped, so a drafter could not
+        measure from an arrow tip to check a standard's 8 mm (Rafael's
+        seventh review, 16:41)."""
+        block = dim.get_geometry_block()
+        if block is None:
+            return
+        dx = dy = 0.0
+        if dim.dxf.hasattr("insert"):            # a moved copy's block offset
+            dx, dy = dim.dxf.insert.x, dim.dxf.insert.y
+        end, ins = _TARGET_CODE["END"], _TARGET_CODE["INS"]
+        for part in block:
+            kind = part.dxftype()
+            if kind == "LINE":
+                a, b = part.dxf.start, part.dxf.end
+                segs.append((a.x + dx, a.y + dy, b.x + dx, b.y + dy))
+                seg_o.append(oid)
+            elif kind == "INSERT":
+                p = part.dxf.insert
+                targets.append((p.x + dx, p.y + dy, end))
+                target_o.append(oid)
+            elif kind == "POINT":
+                p = part.dxf.location
+                points.append((p.x + dx, p.y + dy))
+                point_o.append(oid)
+            elif kind in ("MTEXT", "TEXT"):
+                p = part.dxf.insert
+                targets.append((p.x + dx, p.y + dy, ins))
+                target_o.append(oid)
 
     @staticmethod
     def _viewport_frame(vp, oid, segs, seg_o) -> None:
