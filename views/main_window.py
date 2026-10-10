@@ -40,6 +40,8 @@ from views.viewport import Viewport
 
 SETTING_SIDEBAR_SHOWN = "ui/sidebar_shown"
 SETTING_SIDEBAR_WIDTH = "ui/sidebar_width"
+#: The Linetype control's last entry, "Other...", which opens the manager.
+_OTHER_LINETYPE = "\x00other"
 
 
 class _OpenWorker(QThread):
@@ -3292,7 +3294,10 @@ class MainWindow(QMainWindow):
             names += [n for n in layer_ops.available_linetypes(self.document)
                       if n not in names]
         for name in names:
-            combo.addItem(linetype_icon(name, self.document), name, name)
+            label = tr(name) if name in ("ByLayer", "ByBlock") else name
+            combo.addItem(linetype_icon(name, self.document), label, name)
+        # AutoCAD's Linetype control ends in "Other...", the Linetype Manager
+        combo.addItem(tr("Other..."), _OTHER_LINETYPE)
 
     def _fill_lineweight_combo(self) -> None:
         from core import layers as layer_ops
@@ -3363,7 +3368,11 @@ class MainWindow(QMainWindow):
         self._apply_property("color", self._color_combo.itemData(index))
 
     def _on_prop_linetype(self, index: int) -> None:
-        self._apply_property("linetype", self._linetype_combo.itemData(index))
+        value = self._linetype_combo.itemData(index)
+        if value == _OTHER_LINETYPE:
+            self._cmd_linetype()
+            return
+        self._apply_property("linetype", value)
 
     def _on_prop_lineweight(self, index: int) -> None:
         self._apply_property("lineweight",
@@ -3897,11 +3906,7 @@ class MainWindow(QMainWindow):
         d.register("-PURGE", self._cmd_purge_cli)
         for name in ("OVERKILL", "-OVERKILL", "WBLOCK", "-WBLOCK"):
             d.register(name, lambda *a, n=name: self.tools.start_tool(n))
-        # In-scope commands that land in later phases: answer honestly.
-        for name, phase in (
-            ("LINETYPE", 6),
-        ):
-            d.register_future(name, phase)
+        d.register("LINETYPE", self._cmd_linetype)
 
     # -- MSPACE / PSPACE (activate a viewport; ZOOM nXP sets its scale) ---------
     def _cmd_mspace(self, *args) -> None:
@@ -4733,6 +4738,21 @@ class MainWindow(QMainWindow):
             angdir=int(self._header_value("$ANGDIR", 0) or 0),
             angbase=float(self._header_value("$ANGBASE", 0.0) or 0.0),
             args=args)
+
+    def _cmd_linetype(self, *args) -> None:
+        """LINETYPE (Format > Linetype, LT): the Linetype Manager."""
+        if self.document is None:
+            self.new_document()
+        from views.linetype_dialog import LinetypeManagerDialog
+
+        dialog = LinetypeManagerDialog(self, self.document, self.tools._execute)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+        self._props_combo_key = None          # loaded/renamed linetypes
+        self._refresh_props_toolbar()
+        self._sync_panels()
 
     def _cmd_ltscale(self, *args) -> Prompt | None:
         """LTSCALE — global linetype scale; changing it regenerates."""

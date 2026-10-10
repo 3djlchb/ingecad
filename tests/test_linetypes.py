@@ -181,7 +181,10 @@ def test_the_select_dialog_lists_what_is_loaded_with_a_sample(qapp):
         dialog.deleteLater()
 
 
-def test_the_load_dialog_offers_only_what_is_missing(qapp):
+def test_the_load_dialog_offers_the_whole_library_loaded_ones_too(qapp):
+    """Load OR RELOAD Linetypes (reference p. 1046): AutoCAD lists every
+    definition of the file, the loaded ones too -- picking one of those is a
+    reload, which it confirms first. CONTINUOUS is never listed."""
     from views.linetype_dialog import LoadLinetypesDialog
 
     document = _document()
@@ -191,7 +194,7 @@ def test_the_load_dialog_offers_only_what_is_missing(qapp):
         offered = [dialog.table.item(r, 0).text()
                    for r in range(dialog.table.rowCount())]
         assert "CENTER" in offered
-        assert "DASHED" not in offered, "an already loaded linetype was offered"
+        assert "DASHED" in offered, "a loaded linetype cannot be reloaded"
         assert "CONTINUOUS" not in offered
 
         # The sample has to be the WHOLE pattern. It was not: the library
@@ -214,36 +217,6 @@ def test_the_load_dialog_offers_only_what_is_missing(qapp):
 
 # -- the Layers panel's Load button, the way a user reaches it ------------------
 
-def _drive_modal(qapp, cls, action, errors, timeout=5.0):
-    """Wait for the modal dialog of class ``cls`` and run ``action`` on it.
-
-    The dialogs are exec()'d, so the test cannot hold them: it polls from the
-    event loop the modal itself spins, the way a user's click would arrive.
-    A failing ``action`` is kept in ``errors`` and its dialog rejected, so a
-    regression fails the test instead of leaving a modal that hangs it.
-    """
-    import time
-
-    from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QApplication
-
-    started = time.monotonic()
-
-    def poll():
-        modal = QApplication.activeModalWidget()
-        if isinstance(modal, cls):
-            try:
-                action(modal)
-            except BaseException as exc:      # noqa: BLE001 -- re-raised below
-                errors.append(exc)
-                if modal.isVisible():
-                    modal.reject()
-        elif time.monotonic() - started < timeout:
-            QTimer.singleShot(20, poll)
-
-    QTimer.singleShot(0, poll)
-
-
 @pytest.mark.parametrize("purged_first", [False, True])
 def test_load_from_the_layers_panel_loads_and_sets_the_layer(qapp, purged_first):
     """Rafael's seventh review, 23:20: Layers ▸ the layer's linetype ▸ Load...
@@ -258,6 +231,7 @@ def test_load_from_the_layers_panel_loads_and_sets_the_layer(qapp, purged_first)
 
     from core.cleanup import PurgeCommand
     from core.layers import NewLayerCommand
+    from modal import drive_modal
     from views.linetype_dialog import LoadLinetypesDialog, SelectLinetypeDialog
     from views.main_window import MainWindow
 
@@ -287,14 +261,14 @@ def test_load_from_the_layers_panel_loads_and_sets_the_layer(qapp, purged_first)
             dialog.accept()
 
         def select_dialog(dialog):
-            _drive_modal(qapp, LoadLinetypesDialog, load_dialog, errors)
+            drive_modal(LoadLinetypesDialog, load_dialog, errors)
             load = next(b for b in dialog.findChildren(QPushButton)
                         if b.text().rstrip(".…") in ("Load", "Cargar"))
             load.click()                      # spins the Load dialog's modal
             assert dialog.result_name() == wanted, "loaded but not listed"
             dialog.accept()
 
-        _drive_modal(qapp, SelectLinetypeDialog, select_dialog, errors)
+        drive_modal(SelectLinetypeDialog, select_dialog, errors)
         table = panel.table
         rect = table.visualItemRect(table.item(row, 6))
         QTest.mouseClick(table.viewport(), Qt.LeftButton, pos=rect.center())

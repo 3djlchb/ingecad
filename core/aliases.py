@@ -115,6 +115,8 @@ DEFAULT_ALIASES: dict[str, str] = {
     "-UN": "-UNITS",
     "DDUNITS": "UNITS",
     "LTS": "LTSCALE",
+    "LT": "LINETYPE",
+    "LTYPE": "LINETYPE",
     "S": "STRETCH",
     "BR": "BREAK",
     "J": "JOIN",
