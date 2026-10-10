@@ -287,9 +287,12 @@ def _dim_grip_preview(entity, role, wx, wy):
         measurement = float(entity.get_measurement())
     except Exception:
         pass
+    from core.dim_commands import measurement_text
+
     if role == "dim_text":
         return {"text_at": (wx, wy),
-                "text": f"{measurement:.2f}" if measurement is not None else ""}
+                "text": measurement_text(entity, measurement)
+                if measurement is not None else ""}
     if kind not in (0, 1):
         return None
     p1 = entity.dxf.get("defpoint2", None)
@@ -321,7 +324,7 @@ def _dim_grip_preview(entity, role, wx, wy):
     d1 = (loc[0] + ux * t1, loc[1] + uy * t1)
     d2 = (loc[0] + ux * t2, loc[1] + uy * t2)
     return {"p1": tuple(p1), "p2": tuple(p2), "d1": d1, "d2": d2,
-            "text": f"{length:.2f}"}
+            "text": measurement_text(entity, length)}
 
 
 def _track_label(kind: str) -> str:
