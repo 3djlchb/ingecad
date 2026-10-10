@@ -1147,7 +1147,7 @@ class ToolController(QObject):
         """A tool's prompt: to the command window, and remembered for the
         dynamic-input tooltip beside the cursor."""
         self.current_prompt = text
-        self.window.command_line.echo(text)
+        self.window.command_line.echo_prompt(text)
 
     def _finish(self) -> None:
         self.tool = None

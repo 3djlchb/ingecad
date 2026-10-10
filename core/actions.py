@@ -46,6 +46,8 @@ class Dispatcher:
 
     aliases: dict[str, str] = field(default_factory=aliases_mod.load_aliases)
     echo: Callable[[str], None] = lambda text: None
+    #: how a prompt is written, left open for its answer; ``echo`` if unset
+    echo_prompt: Optional[Callable[[str], None]] = None
 
     def __post_init__(self) -> None:
         self._commands: dict[str, _Entry] = {}
@@ -188,7 +190,7 @@ class Dispatcher:
     def _continue(self, result: Optional[Prompt]) -> None:
         if isinstance(result, Prompt):
             self._pending = result
-            self.echo(result.text)
+            (self.echo_prompt or self.echo)(result.text)
 
 
 # -- drawing actions (headless, undoable) --------------------------------------

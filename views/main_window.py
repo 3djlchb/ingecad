@@ -1836,7 +1836,8 @@ class MainWindow(QMainWindow):
         # the automatic save's gate belongs, and why no call site had to
         # learn about it.
         self.history.before_mutation = self._autosave_gate
-        self.dispatcher = Dispatcher(echo=self.command_line.echo)
+        self.dispatcher = Dispatcher(echo=self.command_line.echo,
+                                     echo_prompt=self.command_line.echo_prompt)
 
         from views.tool_controller import ToolController
 
@@ -1861,7 +1862,10 @@ class MainWindow(QMainWindow):
         self._build_mode_toggles()
 
     def _on_command_submitted(self, text: str) -> None:
-        self.command_line.echo_input(text)
+        if self.tools.active() or self.dispatcher.pending_prompt is not None:
+            self.command_line.echo_answer(text)     # "prompt: answer"
+        else:
+            self.command_line.echo_input(text)
         stripped = text.strip()
         if stripped.startswith("'"):
             # Transparent command ('ZOOM, 'PAN, 'REDRAW) — runs without
