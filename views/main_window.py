@@ -4762,7 +4762,7 @@ class MainWindow(QMainWindow):
         from core import linetypes as lt_ops
 
         def pick_file(caption: str, save: bool) -> str:
-            standard = lt_ops.standard_lin_file()
+            standard = lt_ops.standard_lin_file(self.document)
             name_filter = tr("Linetype files (*.lin)")
             if save:
                 path, _selected = file_dialogs.get_save_file(

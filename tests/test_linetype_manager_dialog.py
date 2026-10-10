@@ -303,7 +303,7 @@ def test_dash_lt_typed_in_the_window_loads_from_the_proposed_file(qapp, monkeypa
     try:
         for text in ("-LT", "L", "ACAD_ISO10W100", ""):
             _type(win, text)
-        assert proposed and proposed[0] == lt_ops.standard_lin_file()
+        assert proposed and proposed[0] == lt_ops.standard_lin_file(win.document)
         assert win.document.doc.linetypes.has_entry("ACAD_ISO10W100")
         combo = win._linetype_combo
         assert combo.findData("ACAD_ISO10W100") >= 0, "the bar did not refresh"

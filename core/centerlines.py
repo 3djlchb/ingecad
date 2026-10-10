@@ -209,7 +209,7 @@ def _resolve_linetype(drawing, wanted: str):
     from core import linetypes as lt_ops
 
     have = {lt.dxf.name.upper(): lt.dxf.name for lt in drawing.linetypes}
-    library = lt_ops.library()
+    library = lt_ops.STANDARD           # names only: the same in both files
     for name in (wanted, DEFAULT_LTYPE):
         key = name.upper()
         if key in have:

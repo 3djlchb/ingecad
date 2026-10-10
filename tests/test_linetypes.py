@@ -74,6 +74,27 @@ def test_the_pattern_comes_from_the_drawing_not_from_the_library():
     assert lt_ops.pattern_of(document, "Continuous") == []
 
 
+@pytest.mark.parametrize("measurement,center", [
+    (1, [31.75, -6.35, 6.35, -6.35]),     # acadiso.lin
+    (0, [1.25, -0.25, 0.25, -0.25]),      # acad.lin
+])
+def test_a_metric_drawing_loads_acadiso_values_an_imperial_one_acad(
+        measurement, center):
+    """AutoCAD picks the library by MEASUREMENT: acadiso.lin for a metric
+    drawing, where the classic families are in millimetres (25.4 times
+    acad.lin's numbers), acad.lin for an imperial one. The ISO family is the
+    same in both. IngeCAD loaded acad.lin's everywhere, so a CENTER line in
+    a millimetre plan came out 25 times shorter than AutoCAD's."""
+    document = _document()
+    document.doc.header["$MEASUREMENT"] = measurement
+    lt_ops.LoadLinetypesCommand(["CENTER", "ACAD_ISO02W100"]).do(document)
+    assert lt_ops.pattern_of(document, "CENTER") == pytest.approx(center)
+    assert lt_ops.pattern_of(document, "ACAD_ISO02W100") == pytest.approx(
+        [12.0, -3.0])
+    name = "ingecadiso.lin" if measurement else "ingecad.lin"
+    assert lt_ops.standard_lin_file(document).name == name
+
+
 def test_every_library_linetype_loads_with_exactly_its_dashes():
     """What the Load dialog offers is what the drawing gets.
 
@@ -88,7 +109,7 @@ def test_every_library_linetype_loads_with_exactly_its_dashes():
     names = [n for n in lt_ops.library_names() if n != "CONTINUOUS"]
     lt_ops.LoadLinetypesCommand(names).do(document)
     for name in names:
-        expected = lt_ops.library()[name][1]
+        expected = lt_ops.library(document)[name][1]
         assert lt_ops.pattern_of(document, name) == pytest.approx(expected), name
         entry = document.doc.linetypes.get(name)
         length = [t.value for t in entry.pattern_tags.tags if t.code == 40]

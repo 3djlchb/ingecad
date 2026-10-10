@@ -6,8 +6,9 @@ How AutoCAD works with linetypes, and what this module mirrors (LINETYPE,
 reference p. 1043):
 
 * A drawing can only use the linetypes **loaded into it**. The standard
-  definitions live in a library file (``acad.lin``), and the *Load or Reload
-  Linetypes* dialog copies the ones you pick into the drawing.
+  definitions live in a library file -- ``acadiso.lin`` for a metric drawing
+  (MEASUREMENT=1), ``acad.lin`` for an imperial one -- and the *Load or
+  Reload Linetypes* dialog copies the ones you pick into the drawing.
 * The Linetype Manager lists what is loaded in three columns -- **Linetype,
   Appearance, Description** -- where Appearance is a drawn sample of the
   pattern, which is how you tell CENTER from PHANTOM at a glance.
@@ -138,15 +139,42 @@ STANDARD: dict[str, tuple[str, list[float]]] = {
 #: memory, and none contradicts a plan.
 
 
-def library() -> dict[str, tuple[str, list[float]]]:
-    """{NAME: (description, dashes)} of everything that can be loaded."""
-    return STANDARD
+def _metric_library() -> dict[str, tuple[str, list[float]]]:
+    """acadiso.lin: the same definitions, the classic families in
+    millimetres -- every number of a non-ISO pattern times 25.4 (acadiso's
+    CENTER is 31.75,-6.35,6.35,-6.35 where acad's is 1.25,-0.25,0.25,-0.25).
+    The ISO ones are millimetres in both files."""
+    return {name: (description, pattern if name.startswith("ACAD_ISO")
+                   else [round(v * 25.4, 6) for v in pattern])
+            for name, (description, pattern) in STANDARD.items()}
+
+
+METRIC = _metric_library()
+
+
+def is_metric(document) -> bool:
+    """MEASUREMENT=1: AutoCAD loads linetypes (and hatch patterns) from the
+    ISO files. DXF's default when the header lacks it is 0, imperial."""
+    if document is None:
+        return False
+    try:
+        return int(document.doc.header.get("$MEASUREMENT", 0)) == 1
+    except (TypeError, ValueError):
+        return False
+
+
+def library(document=None) -> dict[str, tuple[str, list[float]]]:
+    """{NAME: (description, dashes)} of everything that can be loaded into
+    ``document``: acadiso.lin's values for a metric drawing, acad.lin's for
+    an imperial one -- AutoCAD's choice by MEASUREMENT. Without a document,
+    acad.lin's."""
+    return METRIC if is_metric(document) else STANDARD
 
 
 def library_names() -> list[str]:
     """The loadable linetypes, CONTINUOUS first then alphabetical -- the
     order the Load dialog shows them in."""
-    names = [n for n in library() if n != "CONTINUOUS"]
+    names = [n for n in STANDARD if n != "CONTINUOUS"]
     names.sort()
     return ["CONTINUOUS"] + names
 
@@ -216,7 +244,7 @@ def description_of(document, name: str) -> str:
         text = entry.dxf.get("description", "") or ""
         if text:
             return text
-    found = library().get(name.upper())
+    found = library(document).get(name.upper())
     return found[0] if found else ""
 
 
@@ -230,7 +258,7 @@ def pattern_of(document, name: str) -> list[float]:
     try:
         entry = document.doc.linetypes.get(name)
     except Exception:
-        found = library().get(name.upper())
+        found = library(document).get(name.upper())
         return list(found[1]) if found else []
     try:
         return [tag.value for tag in entry.pattern_tags.tags if tag.code == 49]
@@ -292,14 +320,12 @@ class LoadLinetypesCommand(Command):
         self._added: list[str] = []
         self._reloaded: list[tuple] = []
 
-    def _source(self):
-        return self.catalog if self.catalog is not None else library()
-
     def do(self, document) -> None:
         self._added = []
         self._reloaded = []
         table = document.doc.linetypes
-        source = self._source()
+        source = self.catalog if self.catalog is not None \
+            else library(document)
         for name in self.names:
             found = source.get(name.upper())
             if found is None or name.upper() in RESERVED:
@@ -489,18 +515,21 @@ def lin_text(entries: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def standard_lin_file():
+def standard_lin_file(document=None):
     """The standard library as a real LIN file, written where IngeCAD keeps
-    its data -- what -LINETYPE's file dialogs propose, as AutoCAD proposes
-    acad.lin, so pressing Open loads the standard linetypes."""
+    its data -- what the Select Linetype File dialogs propose, as AutoCAD
+    proposes acad.lin or acadiso.lin, so pressing Open loads the standard
+    linetypes. ``ingecadiso.lin`` for a metric drawing, ``ingecad.lin``
+    for an imperial one."""
     from pathlib import Path
 
     from PySide6.QtCore import QStandardPaths
 
     base = QStandardPaths.writableLocation(QStandardPaths.GenericDataLocation)
     folder = Path(base or Path.home() / ".local" / "share") / "IngeCAD"
-    path = folder / "ingecad.lin"
-    text = lin_text(library())
+    metric = is_metric(document)
+    path = folder / ("ingecadiso.lin" if metric else "ingecad.lin")
+    text = lin_text(METRIC if metric else STANDARD)
     try:
         if not path.is_file() or path.read_text(encoding="utf-8") != text:
             folder.mkdir(parents=True, exist_ok=True)
@@ -638,7 +667,7 @@ def linetype_command(document, execute, echo, pick_file, args=()):
             table = document.doc.linetypes
             if table.has_entry(name):
                 value = table.get(name).dxf.name
-            elif name.upper() in library():
+            elif name.upper() in library(document):
                 # not loaded: AutoCAD looks it up in acad.lin and loads it
                 execute(LoadLinetypesCommand([name.upper()]))
                 value = name.upper()
