@@ -210,3 +210,105 @@ def test_the_load_dialog_offers_only_what_is_missing(qapp):
         assert _ink(drawn) > 20, "the ISO sample is blank"
     finally:
         dialog.deleteLater()
+
+
+# -- the Layers panel's Load button, the way a user reaches it ------------------
+
+def _drive_modal(qapp, cls, action, errors, timeout=5.0):
+    """Wait for the modal dialog of class ``cls`` and run ``action`` on it.
+
+    The dialogs are exec()'d, so the test cannot hold them: it polls from the
+    event loop the modal itself spins, the way a user's click would arrive.
+    A failing ``action`` is kept in ``errors`` and its dialog rejected, so a
+    regression fails the test instead of leaving a modal that hangs it.
+    """
+    import time
+
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+
+    started = time.monotonic()
+
+    def poll():
+        modal = QApplication.activeModalWidget()
+        if isinstance(modal, cls):
+            try:
+                action(modal)
+            except BaseException as exc:      # noqa: BLE001 -- re-raised below
+                errors.append(exc)
+                if modal.isVisible():
+                    modal.reject()
+        elif time.monotonic() - started < timeout:
+            QTimer.singleShot(20, poll)
+
+    QTimer.singleShot(0, poll)
+
+
+@pytest.mark.parametrize("purged_first", [False, True])
+def test_load_from_the_layers_panel_loads_and_sets_the_layer(qapp, purged_first):
+    """Rafael's seventh review, 23:20: Layers ▸ the layer's linetype ▸ Load...
+    ▸ ACAD_ISO04W100 ▸ OK, and nothing was loaded -- before or after PURGE.
+    The dialog looked for the undo history through ``parent().window()``;
+    its parent, the Layers panel, keeps the main window in an attribute
+    called ``window``, which shadows the method, and the TypeError died
+    inside the slot. Every click here goes the way the user's did."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QPushButton
+
+    from core.cleanup import PurgeCommand
+    from core.layers import NewLayerCommand
+    from views.linetype_dialog import LoadLinetypesDialog, SelectLinetypeDialog
+    from views.main_window import MainWindow
+
+    wanted = "ACAD_ISO04W100"
+    errors: list[BaseException] = []
+    win = MainWindow()
+    try:
+        win.show()
+        win.resize(1200, 800)
+        win.new_document()
+        qapp.processEvents()
+        if purged_first:
+            unused = [n for n in lt_ops.loaded_names(win.document)
+                      if n.upper() != "CONTINUOUS"]
+            win.tools._execute(PurgeCommand({"ltypes": unused}))
+        assert wanted not in lt_ops.loaded_names(win.document)
+        win.tools._execute(NewLayerCommand("Ejes"))
+        panel = win._layers_panel
+        panel.refresh()
+        qapp.processEvents()
+        row = panel._rows.index("Ejes")
+
+        def load_dialog(dialog):
+            names = [dialog.table.item(r, 0).text()
+                     for r in range(dialog.table.rowCount())]
+            dialog.table.selectRow(names.index(wanted))
+            dialog.accept()
+
+        def select_dialog(dialog):
+            _drive_modal(qapp, LoadLinetypesDialog, load_dialog, errors)
+            load = next(b for b in dialog.findChildren(QPushButton)
+                        if b.text().rstrip(".…") in ("Load", "Cargar"))
+            load.click()                      # spins the Load dialog's modal
+            assert dialog.result_name() == wanted, "loaded but not listed"
+            dialog.accept()
+
+        _drive_modal(qapp, SelectLinetypeDialog, select_dialog, errors)
+        table = panel.table
+        rect = table.visualItemRect(table.item(row, 6))
+        QTest.mouseClick(table.viewport(), Qt.LeftButton, pos=rect.center())
+        if errors:
+            raise errors[0]
+
+        assert wanted in lt_ops.loaded_names(win.document), "Load loaded nothing"
+        layer = win.document.doc.layers.get("Ejes")
+        assert layer.dxf.linetype == wanted, "the layer did not take it"
+        win._cmd_undo()
+        assert layer.dxf.linetype == "Continuous"
+        win._cmd_undo()
+        assert wanted not in lt_ops.loaded_names(win.document), (
+            "the load is not its own undo step")
+    finally:
+        win.document.dirty = False
+        win.close()

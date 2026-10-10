@@ -561,8 +561,9 @@ class LayersPanel(QWidget):
 
         info = next((i for i in layer_ops.layer_list(self.document)
                      if i.name == name), None)
-        dialog = SelectLinetypeDialog(self, self.document,
-                                      current=info.linetype if info else None)
+        dialog = SelectLinetypeDialog(
+            self, self.document, current=info.linetype if info else None,
+            history=getattr(self.window, "history", None))
         if not dialog.exec():
             return
         chosen = dialog.result_name()

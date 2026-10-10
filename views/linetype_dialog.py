@@ -88,10 +88,16 @@ class SelectLinetypeDialog(QDialog):
     """The loaded linetypes, with their samples. ``result_name()`` answers."""
 
     def __init__(self, parent, document, current: str | None = None,
-                 include_bylayer: bool = False) -> None:
+                 include_bylayer: bool = False, history=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(tr("Select Linetype"))
         self.document = document
+        # The undo history Load runs its command on. Passed in, not found by
+        # walking up to the parent's window: the Layers panel keeps the main
+        # window in an attribute named ``window``, which shadows
+        # QWidget.window(), so the walk raised a TypeError inside the slot --
+        # swallowed by Qt -- and Load never loaded anything (0.4.7 to 0.6.6).
+        self._history = history
         self._name = current
         self._include_bylayer = include_bylayer
 
@@ -169,11 +175,9 @@ class SelectLinetypeDialog(QDialog):
         names = dialog.result_names()
         if not names:
             return
-        window = self.parent().window() if self.parent() else None
-        history = getattr(window, "history", None)
         command = lt_ops.LoadLinetypesCommand(names)
-        if history is not None:
-            history.execute(command)
+        if self._history is not None:
+            self._history.execute(command)
         else:
             command.do(self.document)
         self._name = names[0]
