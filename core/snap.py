@@ -190,8 +190,33 @@ class SnapEngine:
                 target_o.append(oid)
             elif t == "SPLINE" and curves is not None:
                 SnapEngine._spline(e, oid, curves, curve_o, targets, target_o)
+            elif t == "VIEWPORT":
+                SnapEngine._viewport_frame(e, oid, segs, seg_o)
         except Exception:
             pass  # malformed entity: not snappable, not fatal
+
+    @staticmethod
+    def _viewport_frame(vp, oid, segs, seg_o) -> None:
+        """A floating viewport's frame snaps like a rectangle -- Endpoint at
+        its corners, Midpoint, Intersection, Nearest, Perpendicular -- as in
+        AutoCAD, so a second viewport can be butted against the first. It
+        did not: the snap found only the title block behind it, and
+        Rafael's two viewports overlapped by 2.5 mm (seventh review, 25:45).
+        Not the sheet's own main viewport, which is no window; and a
+        viewport clipped to a shape snaps through that shape, an entity of
+        its own."""
+        from core import layouts
+
+        layout = vp.doc.layouts.get_layout_for_entity(vp) if vp.doc else None
+        if layout is None or vp not in layouts.visible_viewports(layout):
+            return
+        if layouts.viewport_clip(vp) is not None:
+            return
+        x0, y0, x1, y1 = layouts.viewport_rect(vp)
+        for edge in ((x0, y0, x1, y0), (x1, y0, x1, y1),
+                     (x1, y1, x0, y1), (x0, y1, x0, y0)):
+            segs.append(edge)
+            seg_o.append(oid)
 
     # -- per-type helpers ------------------------------------------------------
     @staticmethod
