@@ -2207,11 +2207,12 @@ class MainWindow(QMainWindow):
         self._refresh_pick_filter_button()
         if allowed is None:
             self.command_line.echo(tr("Selection filter off."))
+        elif not allowed:
+            self.command_line.echo(tr("Selection filter: nothing can be selected."))
         else:
             self.command_line.echo(tr(
                 "Selection filter: only {types}.",
-                types=", ".join(pickfilter.display(t) for t in sorted(allowed))
-                or tr("nothing")))
+                types=", ".join(pickfilter.display(t) for t in sorted(allowed))))
 
     def _refresh_pick_filter_button(self) -> None:
         button = getattr(self, "_pick_filter_btn", None)
@@ -2223,11 +2224,12 @@ class MainWindow(QMainWindow):
         button.setChecked(allowed is not None)
         if allowed is None:
             button.setToolTip(tr("Selection filter by object type: off"))
+        elif not allowed:
+            button.setToolTip(tr("Selection filter by object type: nothing"))
         else:
             button.setToolTip(tr(
                 "Selection filter by object type: only {types}",
-                types=", ".join(pickfilter.display(t) for t in sorted(allowed))
-                or tr("nothing")))
+                types=", ".join(pickfilter.display(t) for t in sorted(allowed))))
 
     def _build_annotation_controls(self, style: str) -> None:
         """AutoCAD's status-bar annotation scale ("Annotation Scale of the
@@ -3309,7 +3311,7 @@ class MainWindow(QMainWindow):
         combo.clear()
         for value in (-1, -2, *layer_ops.LINEWEIGHTS):
             combo.addItem(lineweight_icon(value),
-                          tr(layer_ops.lineweight_label(value)), value)
+                          layer_ops.lineweight_label(value), value)
 
     def _show_current_properties(self) -> None:
         """Reflect either the selection or the current settings, as AutoCAD."""
@@ -3406,7 +3408,7 @@ class MainWindow(QMainWindow):
         from core import layers as layer_ops
 
         if prop == "lineweight":
-            return tr(layer_ops.lineweight_label(value))
+            return layer_ops.lineweight_label(value)
         if prop == "color":
             from views.color_dialog import aci_label
 

@@ -25,12 +25,14 @@ LINEWEIGHTS = [-3, 0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70,
 
 
 def lineweight_label(value: int) -> str:
+    """A lineweight as the interface shows it, translated (the Layers
+    panel showed "Default" in English)."""
     if value == -3:
-        return "Default"
+        return tr("Default")
     if value == -2:
-        return "ByBlock"
+        return tr("ByBlock")
     if value == -1:
-        return "ByLayer"
+        return tr("ByLayer")
     return f"{value / 100:.2f} mm"
 
 
