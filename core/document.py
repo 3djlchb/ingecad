@@ -118,6 +118,14 @@ class Document:
         # AutoCAD's templates: MIRROR keeps text readable. ezdxf's own
         # default is 1 (mirror writing).
         document.doc.header["$MIRRTEXT"] = 0
+        # acadiso.dwt's Standard text style is Arial. The drawing stores the
+        # name; where Arial is not installed (a clean Linux) it is drawn in
+        # Liberation Sans, made on Arial's exact widths
+        # (ezdxf_patches._patch_metric_compatible_fonts).
+        standard = document.doc.styles.get("Standard")
+        if standard is not None and not standard.dxf.get("font", ""):
+            standard.dxf.font = "arial.ttf"
+            standard.set_extended_font_data(family="Arial")
         # and their scale list (annotation scales, viewport scales)
         from core import annotative
 

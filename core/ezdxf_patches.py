@@ -26,6 +26,7 @@ def apply() -> None:
     _patch_polygon_transform()
     _patch_mtext_mask_rendering()
     _patch_bold_italic_font_matching()
+    _patch_metric_compatible_fonts()
     _patch_lwpolyline_get_points()
     _patch_radial_dimension_layout()
     _patch_linear_dimension_direction()
@@ -210,6 +211,143 @@ def _patch_bold_italic_font_matching() -> None:
 
     find_best_match._ingecad_patch = True
     _fonts.find_best_match = find_best_match
+
+
+#: Microsoft's core fonts and the free fonts drawn on their exact metrics,
+#: which every Linux desktop ships (Ubuntu installs them by default): a text
+#: in Liberation Sans is as long as in Arial, so a title block filled in
+#: AutoCAD still fits its boxes. File names as AutoCAD styles store them.
+METRIC_COMPATIBLE_FILES = {
+    "arial.ttf": "LiberationSans-Regular.ttf",
+    "arialbd.ttf": "LiberationSans-Bold.ttf",
+    "ariali.ttf": "LiberationSans-Italic.ttf",
+    "arialbi.ttf": "LiberationSans-BoldItalic.ttf",
+    "arialn.ttf": "LiberationSansNarrow-Regular.ttf",
+    "arialnb.ttf": "LiberationSansNarrow-Bold.ttf",
+    "times.ttf": "LiberationSerif-Regular.ttf",
+    "timesbd.ttf": "LiberationSerif-Bold.ttf",
+    "timesi.ttf": "LiberationSerif-Italic.ttf",
+    "timesbi.ttf": "LiberationSerif-BoldItalic.ttf",
+    "cour.ttf": "LiberationMono-Regular.ttf",
+    "courbd.ttf": "LiberationMono-Bold.ttf",
+    "couri.ttf": "LiberationMono-Italic.ttf",
+    "courbi.ttf": "LiberationMono-BoldItalic.ttf",
+}
+METRIC_COMPATIBLE_FAMILIES = {
+    "arial": "Liberation Sans",
+    "arial narrow": "Liberation Sans Narrow",
+    "times new roman": "Liberation Serif",
+    "courier new": "Liberation Mono",
+}
+#: The twins share the originals' advance widths per em, but ezdxf -- like
+#: AutoCAD -- sizes text by its CAPITAL height, and Liberation's capitals sit
+#: lower in the em: drawn at the same height, Liberation Sans came out 4 %
+#: wider than Arial (Courier's twin 13 % narrower). Each factor brings the
+#: twin back to the original's widths; measured as width(original) /
+#: width(twin) over the same text, with both fonts installed. The capitals
+#: end up that much shorter, the length is Arial's -- which is what keeps a
+#: title block's text inside its boxes.
+METRIC_COMPATIBLE_SCALE = {
+    "arial.ttf": 0.9611, "arialbd.ttf": 0.9611,
+    "ariali.ttf": 0.9611, "arialbi.ttf": 0.9611,
+    "arialn.ttf": 0.9611, "arialnb.ttf": 0.9611,
+    "times.ttf": 0.9748, "timesbd.ttf": 0.9769,
+    "timesi.ttf": 0.9582, "timesbi.ttf": 0.9555,
+    "cour.ttf": 1.1530, "courbd.ttf": 1.1121,
+    "couri.ttf": 1.1530, "courbi.ttf": 1.1121,
+}
+
+
+_ASKED_BY_TWIN = {twin.lower(): asked for asked, twin in METRIC_COMPATIBLE_FILES.items()}
+
+
+def add_metric_compatible_synonyms(manager) -> None:
+    """Let each Microsoft core font's file name answer with its Liberation
+    twin when the font itself is not installed.
+
+    The entry KEEPS the asked name -- its face says "arial.ttf" while its
+    file is Liberation's -- so the text renderer still knows Arial was asked
+    for and can apply METRIC_COMPATIBLE_SCALE. An installed Arial keeps
+    answering for itself.
+    """
+    from ezdxf.fonts.font_manager import CacheEntry
+
+    cache = manager._font_cache
+    for asked, twin in METRIC_COMPATIBLE_FILES.items():
+        if asked in cache or twin not in cache:
+            continue
+        entry = cache[twin]
+        cache._cache[cache.key(asked)] = CacheEntry(
+            entry.file_path, entry.font_face._replace(filename=asked))
+
+
+def is_twin_standing_in(manager, name: str) -> bool:
+    """Is ``name`` (a Microsoft core font) answered by its Liberation twin?"""
+    twin = METRIC_COMPATIBLE_FILES.get(str(name).lower())
+    if twin is None:
+        return False
+    try:
+        entry = manager._font_cache[name]
+    except KeyError:
+        return False
+    return entry.file_path.name.lower() == twin.lower()
+
+
+def _patch_metric_compatible_fonts() -> None:
+    """A drawing asking for Arial on a Linux without it gets Liberation Sans.
+
+    The DWG stores a font's NAME. Where the font is missing ezdxf falls back
+    to the first of its defaults it finds -- DejaVu Sans Condensed on Linux,
+    wider and heavier than Arial, so texts came out bold-looking and longer
+    than in AutoCAD (Rafael's PDFs). The fonts made on Arial's, Times New
+    Roman's and Courier New's exact widths are what Linux itself substitutes;
+    they are used only when the real font is not installed, by file name
+    (a text style's "arial.ttf") and by family (MTEXT's ``\\fArial|``).
+    """
+    from ezdxf.fonts import fonts as _fonts
+
+    if getattr(_fonts.find_best_match, "_ingecad_metric_fonts", False):
+        return
+    add_metric_compatible_synonyms(_fonts.font_manager)
+
+    original = _fonts.find_best_match
+
+    def find_best_match(*, family="sans-serif", style="Regular", weight=400,
+                        width=5, italic=False):
+        found = original(family=family, style=style, weight=weight,
+                         width=width, italic=italic)
+        if found is not None and found.family.lower() == str(family).lower():
+            return found
+        twin = METRIC_COMPATIBLE_FAMILIES.get(str(family).lower())
+        if twin is not None:
+            match = original(family=twin, style=style, weight=weight,
+                             width=width, italic=italic)
+            if match is not None and match.family.lower() == twin.lower():
+                # answer with the asked font's own entry, so it is scaled
+                asked = _ASKED_BY_TWIN.get(match.filename.lower())
+                if asked and _fonts.font_manager.has_font(asked):
+                    return _fonts.font_manager.get_font_face(asked)
+                return match
+        return found
+
+    find_best_match._ingecad_patch = True
+    find_best_match._ingecad_metric_fonts = True
+    _fonts.find_best_match = find_best_match
+
+    original_cache = _fonts.TrueTypeFont.create_cache
+
+    def create_cache(self, ttf: str):
+        cache = original_cache(self, ttf)
+        name = str(ttf).lower()
+        factor = METRIC_COMPATIBLE_SCALE.get(name)
+        if factor and not getattr(cache, "_ingecad_scaled", False) \
+                and is_twin_standing_in(_fonts.font_manager, name):
+            plain = cache.get_scaling_factor
+            cache.get_scaling_factor = lambda cap_height: plain(cap_height) * factor
+            cache._ingecad_scaled = True
+        return cache
+
+    _fonts.TrueTypeFont.create_cache = create_cache
 
 
 #: One accessor per format code, so any format keeps ``format_point``'s exact
