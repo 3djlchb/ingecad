@@ -29,6 +29,11 @@ _POLAR = re.compile(rf"^(?P<rel>[@#])?(?P<d>{_NUM})\s*<\s*(?P<a>{_NUM})$")
 _DISTANCE = re.compile(rf"^(?P<d>{_NUM})$")
 
 
+def is_direct_distance(text: str) -> bool:
+    """A bare number at a point prompt: AutoCAD's direct distance entry."""
+    return bool(_DISTANCE.match(text.strip()))
+
+
 @dataclass(frozen=True)
 class ParsedPoint:
     x: float

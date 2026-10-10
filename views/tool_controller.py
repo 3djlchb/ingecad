@@ -17,7 +17,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from core import actions
 from core import gc_guard
 from core import layouts as layout_ops
-from core.coords import CoordinateError, parse_point
+from core.coords import CoordinateError, is_direct_distance, parse_point
 from core.i18n import tr
 from core.select import GeometryIndex, apply_grip_edit, entity_grips
 from core.snap import SnapEngine, SnapHit
@@ -2372,7 +2372,11 @@ class ToolController(QObject):
             self.changed.emit()
             return
         point = self.resolved_point(wx, wy)
-        self._note_point(point)
+        if not self.tool.entity_picker:
+            # LASTPOINT is a point entered at a point prompt; a click that
+            # picks an object (TRIM, EXTEND) is not one. It was, and the
+            # next direct distance started from a trimmed line's pick.
+            self._note_point(point)
         self.tool.on_point(point)
         self.clear_tracking()          # AutoCAD releases the acquired points with the point
         # The step may have made a preview possible (the second origin of a
@@ -2966,6 +2970,18 @@ class ToolController(QObject):
             constrained = self.resolved_point(*self._cursor)
             direction = math.atan2(constrained[1] - anchor[1],
                                    constrained[0] - anchor[0])
+            if self.track_hint is not None and offset_from is None \
+                    and is_direct_distance(stripped):
+                # On an alignment path -- object snap tracking from an
+                # acquired point, an extension, polar -- a typed distance is
+                # measured from the path's source along it: AutoCAD's "hover
+                # the centre, slide right, type 6". It went from the last
+                # point instead, toward the cursor, and the centre landed
+                # 19 units below (Rafael's seventh review, 06:16-07:02).
+                (sx, sy), (px, py), _label = self.track_hint
+                if math.hypot(px - sx, py - sy) > 1e-12:
+                    anchor = (sx, sy)
+                    direction = math.atan2(py - sy, px - sx)
         else:
             direction = 0.0     # no pointer yet: along +X, as AutoCAD
         try:
@@ -2981,6 +2997,8 @@ class ToolController(QObject):
             self.window.command_line.echo(tr("Invalid input."))
             return True
         self._note_point((point.x, point.y))
+        # a typed point releases the acquired points, as a picked one does
+        self.clear_tracking()
         if self._modifier is not None:
             final = self._modifier_take((point.x, point.y))
             if final is None:
