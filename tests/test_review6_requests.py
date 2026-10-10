@@ -65,6 +65,28 @@ def test_the_status_bar_button_adds_the_current_scale_to_the_selection(qapp):
         win.close()
 
 
+def test_add_current_scale_on_objects_that_already_have_it_finishes(qapp):
+    """Rafael's seventh review, 22:01-22:19: + on annotative dimensions
+    already at 1:1 printed nothing and took a second Enter. The command
+    counted them in ``skipped``, which the tool controller reads as the list
+    of entities an edit could not move -- an int there raised TypeError and
+    the tool never finished."""
+    win = _window(qapp)
+    try:
+        text = _annotative_text(win)            # born at the current scale
+        scale = annotative.scale_or_default(win.document.doc)
+        assert annotative.has_scale(text, scale)
+        win.tools.selection = {text.dxf.handle}
+        win._anno_add_btn.click()
+        qapp.processEvents()
+        assert win.tools.tool is None, "the tool is left waiting"
+        shown = win.command_line.history.toPlainText()
+        assert "already supported" in shown or "ya admit" in shown, shown[-200:]
+    finally:
+        win.document.dirty = False
+        win.close()
+
+
 def test_the_scale_list_offers_the_standard_scales_on_a_foreign_drawing(qapp, tmp_path):
     doc = ezdxf.new("R2018")
     doc.modelspace().add_line((0, 0), (10, 0))

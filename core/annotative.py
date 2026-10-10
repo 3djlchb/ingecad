@@ -853,25 +853,31 @@ class ObjectScaleCommand(Command):
         self.scale_name = scale_name
         self.add = add
         self._done: list = []      # (entity, saved) for Delete; entities for Add
-        self.skipped = 0
+        # How many were left as they were (the scale already there, or not
+        # there to delete). A COUNT -- not ``skipped``, which on the editing
+        # commands is the list of entities that could not be transformed and
+        # which the tool controller reads as such: an int there raised
+        # TypeError and left Add Current Scale hanging, mute, until a second
+        # Enter (Rafael's seventh review, 22:01-22:19).
+        self.unchanged = 0
 
     def do(self, document) -> None:
         scale = find_scale(document.doc, self.scale_name)
         if scale is None:
             raise ValueError(f"no scale named {self.scale_name!r} in the drawing")
         self._done = []
-        self.skipped = 0
+        self.unchanged = 0
         for entity in self.entities:
             if self.add:
                 if has_scale(entity, scale) or not supports_representation(entity):
-                    self.skipped += 1
+                    self.unchanged += 1
                     continue
                 add_representation(entity, scale, default=False)
                 self._done.append((entity, None))
             else:
                 saved = remove_representation(entity, scale)
                 if saved is None:
-                    self.skipped += 1
+                    self.unchanged += 1
                     continue
                 self._done.append((entity, saved))
         document.dirty = True

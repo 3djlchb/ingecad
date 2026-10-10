@@ -169,7 +169,7 @@ def test_objectscale_adds_and_deletes_but_never_the_default():
     assert {r.scale.name for r in A.representations(text)} == {"1:50", "1:100"}
     default = A.ObjectScaleCommand([text], "1:50", add=False)
     default.do(document)
-    assert default.skipped == 1
+    assert default.unchanged == 1
     assert {r.scale.name for r in A.representations(text)} == {"1:50", "1:100"}
 
 

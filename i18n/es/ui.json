@@ -1957,5 +1957,6 @@
   "Descriptive text:": "Texto descriptivo:",
   "Enter linetype pattern (on next line):": "Indique patrón de tipo de línea (en la línea siguiente):",
   "Invalid linetype pattern.": "Patrón de tipo de línea no válido.",
-  "New linetype definition saved to file.": "Nueva definición de tipo de línea guardada en el archivo."
+  "New linetype definition saved to file.": "Nueva definición de tipo de línea guardada en el archivo.",
+  "{n} object(s) already supported {scale}.": "{n} objeto(s) ya admitían {scale}."
 }

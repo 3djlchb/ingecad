@@ -96,16 +96,24 @@ class ObjectScaleTool(Tool):
             command = annotative.ObjectScaleCommand(
                 self._entities, scale.name, add=self._add)
             self.ctx.execute(command)
-            done = len(command.entities) - command.skipped
-            if self._add:
-                self.ctx.echo(tr("{n} object(s) now support {scale}.",
-                                 n=done, scale=scale.name))
-            else:
-                self.ctx.echo(tr("{scale} removed from {n} object(s).",
-                                 n=done, scale=scale.name))
+            report_scale_change(self.ctx.echo, command, scale.name,
+                                self._add)
             self.ctx.finish()
             return True
         return False
+
+
+def report_scale_change(echo, command, scale: str, add: bool) -> None:
+    """What OBJECTSCALE / Add or Delete Current Scale did: how many objects
+    changed, and how many already were as asked."""
+    done = len(command.entities) - command.unchanged
+    if add:
+        echo(tr("{n} object(s) now support {scale}.", n=done, scale=scale))
+        if command.unchanged:
+            echo(tr("{n} object(s) already supported {scale}.",
+                    n=command.unchanged, scale=scale))
+    else:
+        echo(tr("{scale} removed from {n} object(s).", n=done, scale=scale))
 
 
 class CurrentScaleTool(Tool):
@@ -136,13 +144,7 @@ class CurrentScaleTool(Tool):
         scale = annotative.scale_or_default(document.doc)
         command = annotative.ObjectScaleCommand(chosen, scale.name, add=self.add)
         self.ctx.execute(command)
-        done = len(command.entities) - command.skipped
-        if self.add:
-            self.ctx.echo(tr("{n} object(s) now support {scale}.",
-                             n=done, scale=scale.name))
-        else:
-            self.ctx.echo(tr("{scale} removed from {n} object(s).",
-                             n=done, scale=scale.name))
+        report_scale_change(self.ctx.echo, command, scale.name, self.add)
         self.ctx.finish()
 
 
