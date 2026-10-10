@@ -662,6 +662,36 @@ _UNSET = object()
 _UNSEEN = object()
 
 
+def viewport_ltscale_factor(vp) -> float:
+    """What a viewport multiplies the drawing's linetype scale by so its
+    dashes come out on the sheet the way AutoCAD draws them.
+
+    AutoCAD: with PSLTSCALE=1 (the default, the Linetype Manager's "Use
+    paper space units for scaling") a dash measures pattern x LTSCALE ON
+    PAPER in every viewport, whatever its scale; with 0 it measures that in
+    model units, so pattern x LTSCALE x scale on paper.
+
+    ezdxf applies the pattern to the geometry already in PAPER coordinates
+    (its linetype stage runs after the viewport's transform and clip) and
+    then multiplies it by 1/scale -- so a 1:2 viewport drew dashes twice too
+    long on the sheet and a 1:50 one fifty times. The factor returned here
+    is applied on top of that to land on AutoCAD's result: ``scale`` for
+    PSLTSCALE=1, ``scale**2`` for 0, 1.0 when the scale is unknown.
+    """
+    doc = getattr(vp, "doc", None)
+    if doc is None:
+        return 1.0
+    try:
+        scale = float(vp.get_scale())
+        paper_units = int(doc.header.get("$PSLTSCALE", 1))
+    except Exception:                       # noqa: BLE001 - leave it as is
+        return 1.0
+    if not (scale > 0.0) or scale != scale:
+        return 1.0
+    scale = max(scale, 0.0001)              # ezdxf's own 1:10000 clamp
+    return scale if paper_units else scale * scale
+
+
 class TolerantFrontend(Frontend):
     """Frontend that survives malformed entities.
 
@@ -810,12 +840,18 @@ class TolerantFrontend(Frontend):
         self._anno_show_all = self._anno_sheet_show_all
         inside = self._in_viewport
         self._in_viewport = True
+        # Linetypes in a viewport the way AutoCAD scales them (PSLTSCALE;
+        # see viewport_ltscale_factor). The viewport's render context is
+        # copied from this one, so set it here and put it back after.
+        saved_ltscale = self.ctx.linetype_scale
+        self.ctx.linetype_scale = saved_ltscale * viewport_ltscale_factor(vp)
         try:
             super().draw_viewport(vp)
         finally:
             self._vp_rect = previous
             self._anno_scale, self._anno_show_all = saved
             self._in_viewport = inside
+            self.ctx.linetype_scale = saved_ltscale
 
     def _skip_share_check(self, entity) -> bool:
         """Only a drawing's own top-level entities are shared out: the
