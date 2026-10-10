@@ -84,6 +84,15 @@ def stretch_points(entity) -> list[Point]:
         return [(cx + r * math.cos(math.radians(a)),
                  cy + r * math.sin(math.radians(a)))
                 for a in (a_start, a_end)]
+    if kind == "DIMENSION":
+        # every definition point it has: caught all, it moves whole
+        points = []
+        for attr in ("defpoint", "defpoint2", "defpoint3", "defpoint4",
+                     "defpoint5", "text_midpoint"):
+            if entity.dxf.hasattr(attr):
+                p = entity.dxf.get(attr)
+                points.append((p.x, p.y))
+        return points
     attr = _ANCHOR_ATTR.get(kind, "__unknown__")
     if attr:
         try:
@@ -92,6 +101,24 @@ def stretch_points(entity) -> list[Point]:
         except Exception:
             return []
     return []
+
+
+def dimension_stretch_points(dim) -> list[tuple[str, Point]]:
+    """The definition points STRETCH may move on a linear or aligned
+    dimension: the two extension-line origins, the dimension line's
+    location and -- when it was placed by hand -- the text. Other kinds
+    stretch only when caught whole."""
+    if (int(dim.dxf.get("dimtype", 0)) & 7) not in (0, 1):
+        return []
+    out = []
+    for attr in ("defpoint2", "defpoint3", "defpoint"):
+        if dim.dxf.hasattr(attr):
+            p = dim.dxf.get(attr)
+            out.append((attr, (p.x, p.y)))
+    if int(dim.dxf.get("dimtype", 0)) & 128 and dim.dxf.hasattr("text_midpoint"):
+        p = dim.dxf.text_midpoint
+        out.append(("text_midpoint", (p.x, p.y)))
+    return out
 
 
 def _move_whole(entity, dx: float, dy: float) -> None:
@@ -114,6 +141,8 @@ def stretch_entity(entity, rects, dx: float, dy: float) -> bool:
     if all(caught):
         _move_whole(entity, dx, dy)
         return True
+    if entity.dxftype() == "DIMENSION":
+        return False      # partly caught: StretchCommand re-measures it
 
     # Moving single vertices: work in WCS. An inverted OCS is flipped to +Z
     # first (same geometry; StretchCommand's snapshot undoes it exactly),
@@ -181,16 +210,44 @@ class StretchCommand(Command):
 
     def do(self, document) -> None:
         self._before = [e.copy() for e in self.entities]
+        self._dim_edits = []
         for entity in self.entities:
             try:
+                if entity.dxftype() == "DIMENSION" \
+                        and self._stretch_dimension(document, entity):
+                    continue
                 stretch_entity(entity, self.rects, self.dx, self.dy)
             except Exception:
                 pass          # one odd entity must not abort the command
         document.dirty = True
 
+    def _stretch_dimension(self, document, dim) -> bool:
+        """A dimension with only some definition points in the window: the
+        caught ones move and it re-measures, as AutoCAD stretches a
+        dimension that is not associative -- stretch the part and its
+        dimension together and the number follows. It stayed put: STRETCH
+        knew no DIMENSION (Rafael's seventh review, 28:40). True when it
+        was handled here; a dimension caught whole moves like any entity."""
+        from core.actions import DimGripCommand
+
+        caught = [(attr, p) for attr, p in dimension_stretch_points(dim)
+                  if _inside(p, self.rects)]
+        if not caught or len(caught) == len(dimension_stretch_points(dim)):
+            return False
+        for attr, (x, y) in caught:
+            edit = DimGripCommand(dim, attr, (x + self.dx, y + self.dy))
+            edit.do(document)
+            self._dim_edits.append((dim, edit))
+        return True
+
     def undo(self, document) -> None:
+        edited = set()
+        for dim, edit in reversed(getattr(self, "_dim_edits", [])):
+            edit.undo(document)
+            edited.add(id(dim))
         for entity, snap in zip(self.entities, self._before):
-            _restore_entity(entity, snap)
+            if id(entity) not in edited:
+                _restore_entity(entity, snap)
         document.dirty = True
 
 
