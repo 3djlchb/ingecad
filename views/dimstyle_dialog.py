@@ -109,8 +109,13 @@ def _preview_scale(attribs: dict) -> float:
     return (height * _PREVIEW_TEXT_HEIGHTS) / 40.0
 
 
-def render_dim_preview(attribs: dict, w: int = 300, h: int = 190) -> QPixmap:
-    """A real sample render of the style: linear + angular + radius dims."""
+def render_dim_preview(attribs: dict, w: int = 300, h: int = 190,
+                       fixed_heights: dict | None = None) -> QPixmap:
+    """A real sample render of the style: linear + angular + radius dims.
+
+    ``fixed_heights`` maps the drawing's text styles to their fixed height,
+    so a style whose text style fixes it previews at that height -- as the
+    drawing draws it -- instead of at DIMTXT."""
     import ezdxf
     from ezdxf.addons.drawing import RenderContext
     from ezdxf.addons.drawing.pyqt import PyQtBackend
@@ -128,6 +133,9 @@ def render_dim_preview(attribs: dict, w: int = 300, h: int = 190) -> QPixmap:
                 doc.styles.add(txsty, font="txt")
             except Exception:
                 txsty = "Standard"
+        fixed = (fixed_heights or {}).get(attribs.get("dimtxsty") or "Standard", 0.0)
+        if fixed and txsty in doc.styles:
+            doc.styles.get(txsty).dxf.height = float(fixed)
         style = doc.dimstyles.new("PREV")
         for key, value in attribs.items():
             if key in ("name", "handle", "owner") or value is None:
@@ -266,10 +274,12 @@ class DimStyleEditorDialog(QDialog):
     """The New/Modify Dimension Style dialog: 5 tabs + live preview."""
 
     def __init__(self, parent, title: str, attribs: dict,
-                 text_styles: list[str]) -> None:
+                 text_styles: list[str],
+                 fixed_heights: dict | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self._attribs = dict(attribs)
+        self._fixed_heights = dict(fixed_heights or {})
         a = self._attribs.get
 
         root = QVBoxLayout(self)
@@ -554,7 +564,8 @@ class DimStyleEditorDialog(QDialog):
         self._render_preview()
 
     def _render_preview(self) -> None:
-        self.preview.setPixmap(render_dim_preview(self.result_props()))
+        self.preview.setPixmap(render_dim_preview(
+            self.result_props(), fixed_heights=self._fixed_heights))
 
     def result_props(self) -> dict:
         """The DIMVARS the dialog controls, as one dict."""
@@ -769,7 +780,8 @@ class DimStyleManagerDialog(QDialog):
             return
         self.preview_label.setText(tr("Preview of: {name}", name=name))
         attribs = style_ops.dim_style_attribs(self.document, name)
-        self.preview.setPixmap(render_dim_preview(attribs))
+        self.preview.setPixmap(render_dim_preview(
+            attribs, fixed_heights=style_ops.fixed_text_heights(self.document)))
         current = style_ops.current_dim_style(self.document)
         if name == current:
             self.description.setText(name)
@@ -808,7 +820,8 @@ class DimStyleManagerDialog(QDialog):
             self.document, dlg.start_with.currentText())
         editor = DimStyleEditorDialog(
             self, tr("New Dimension Style: {name}", name=name), attribs,
-            style_ops.text_style_names(self.document))
+            style_ops.text_style_names(self.document),
+            style_ops.fixed_text_heights(self.document))
         if not editor.exec():
             return
         attribs.update(editor.result_props())
@@ -824,7 +837,8 @@ class DimStyleManagerDialog(QDialog):
         attribs = style_ops.dim_style_attribs(self.document, name)
         editor = DimStyleEditorDialog(
             self, tr("Modify Dimension Style: {name}", name=name), attribs,
-            style_ops.text_style_names(self.document))
+            style_ops.text_style_names(self.document),
+            style_ops.fixed_text_heights(self.document))
         if not editor.exec():
             return
         props = editor.result_props()

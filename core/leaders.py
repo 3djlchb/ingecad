@@ -45,7 +45,15 @@ def dimstyle_values(doc) -> tuple[float, float, float]:
         return float(v)
 
     scale = value("dimscale") or 1.0
-    return value("dimasz") * scale, value("dimtxt") * scale, value("dimgap") * scale
+    from core.styles import dim_text_height
+
+    def get(key, default=None):
+        if key == "dimtxt":
+            return value("dimtxt")
+        return style.dxf.get(key, default) if style is not None else default
+
+    height = dim_text_height(doc, get)
+    return value("dimasz") * scale, height * scale, value("dimgap") * scale
 
 
 def text_style_name(doc) -> str:

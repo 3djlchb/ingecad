@@ -130,7 +130,9 @@ def annotation_scale(drawing) -> float:
         style = drawing.dimstyles.get(name) if name in drawing.dimstyles else None
     except Exception:
         style = None
-    height = float(style.dxf.get("dimtxt", 2.5)) if style is not None else 2.5
+    from core.styles import dim_text_height
+
+    height = dim_text_height(drawing, style.dxf.get) if style is not None else 2.5
     scale = float(style.dxf.get("dimscale", 1.0)) if style is not None else 1.0
     if not scale > 0.0:            # 0 is AutoCAD's "work it out": 1 here
         scale = 1.0

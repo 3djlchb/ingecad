@@ -51,9 +51,22 @@ def dim_scale(document, dim) -> float:
 
 
 def text_height(document, dim) -> float:
-    style = _style(document, dim)
-    height = style.dxf.get("dimtxt", 2.5) if style is not None else 2.5
-    return float(height or 2.5) * dim_scale(document, dim)
+    """The height ``dim``'s text is drawn at, DIMSCALE applied."""
+    from core.styles import dim_text_height
+
+    if dim is not None:
+        try:
+            get = dim.override().get
+        except Exception:                      # noqa: BLE001 - the style's
+            get = None
+    else:
+        get = None
+    if get is None:
+        style = _style(document, dim)
+        if style is None:
+            return 2.5 * dim_scale(document, dim)
+        get = style.dxf.get
+    return dim_text_height(document.doc, get) * dim_scale(document, dim)
 
 
 def measurement_text(dim, value: float) -> str:

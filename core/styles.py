@@ -317,6 +317,45 @@ def dim_style_attribs(document, name: str) -> dict:
     return attribs
 
 
+def fixed_text_heights(document) -> dict[str, float]:
+    """{text style: height} of the text styles that fix their height."""
+    out = {}
+    for style in document.doc.styles:
+        try:
+            height = float(style.dxf.get("height", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if height > 0.0:
+            out[style.dxf.name] = height
+    return out
+
+
+def dim_text_height(doc, get) -> float:
+    """The height a dimension's text is drawn at, before DIMSCALE.
+
+    AutoCAD (Dimension Style, Text Height): "If a fixed text height is set
+    in the Text Style (the text style height is greater than 0), that height
+    overrides the text height set here" -- and ezdxf draws it so. ``get`` is
+    a ``(key, default) -> value`` lookup: a style's ``dxf.get`` or a
+    dimension's override ``get``. The one answer for everything that needs
+    the height -- the drawing, the style dialog's preview, DIMSPACE's
+    spacing, a leader's text, a centre mark's size -- which each read DIMTXT
+    alone and disagreed with the drawing when the style was fixed.
+    """
+    name = get("dimtxsty", None) or "Standard"
+    try:
+        if name in doc.styles:
+            fixed = float(doc.styles.get(name).dxf.get("height", 0.0) or 0.0)
+            if fixed > 0.0:
+                return fixed
+    except Exception:                          # noqa: BLE001 - use DIMTXT
+        pass
+    try:
+        return float(get("dimtxt", 2.5) or 2.5)
+    except (TypeError, ValueError):
+        return 2.5
+
+
 #: What a dimension style means by a variable it does not write, where
 #: ezdxf knows no default: no text style is the Standard one.
 _UNWRITTEN = {"dimtxsty": "Standard"}
