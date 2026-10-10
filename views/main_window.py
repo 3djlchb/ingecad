@@ -3913,6 +3913,7 @@ class MainWindow(QMainWindow):
         for name in ("OVERKILL", "-OVERKILL", "WBLOCK", "-WBLOCK"):
             d.register(name, lambda *a, n=name: self.tools.start_tool(n))
         d.register("LINETYPE", self._cmd_linetype)
+        d.register("MULTIPLE", self._cmd_multiple)
         d.register("-LINETYPE", self._cmd_linetype_cli)
 
     # -- MSPACE / PSPACE (activate a viewport; ZOOM nXP sets its scale) ---------
@@ -4745,6 +4746,26 @@ class MainWindow(QMainWindow):
             angdir=int(self._header_value("$ANGDIR", 0) or 0),
             angbase=float(self._header_value("$ANGBASE", 0.0) or 0.0),
             args=args)
+
+    def _cmd_multiple(self, *args) -> Prompt | None:
+        """MULTIPLE: repeat the next command until Esc (AutoCAD's prefix,
+        e.g. MULTIPLE DIMRADIUS to dimension radius after radius)."""
+        def on_name(text: str):
+            text = text.strip()
+            if not text:
+                return None
+            name = self.dispatcher.resolve_name(text.split()[0])
+            self.tools.repeat_name = name
+            self.dispatcher.submit(name)
+            if self.tools.tool is None:
+                # not a command that stays running (a dialog, a prompt
+                # flow): it ran once
+                self.tools.repeat_name = None
+            return None
+
+        if args:
+            return on_name(" ".join(args))
+        return Prompt(tr("Enter command name to repeat:"), on_name)
 
     def _cmd_linetype(self, *args) -> None:
         """LINETYPE (Format > Linetype, LT): the Linetype Manager."""

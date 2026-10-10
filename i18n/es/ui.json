@@ -1976,5 +1976,6 @@
   "Text vertical position": "Posición vertical del texto",
   "Mark": "Marca",
   "Selection filter: nothing can be selected.": "Filtro de selección: no se puede seleccionar nada.",
-  "Selection filter by object type: nothing": "Filtro de selección por tipo de objeto: ninguno"
+  "Selection filter by object type: nothing": "Filtro de selección por tipo de objeto: ninguno",
+  "Enter command name to repeat:": "Indique el nombre del comando que desea repetir:"
 }

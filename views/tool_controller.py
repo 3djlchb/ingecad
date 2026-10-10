@@ -400,6 +400,8 @@ class ToolController(QObject):
         # beside the cursor, and bare coordinates relative after a first point
         self.dyn_on = False
         self.current_prompt = ""
+        #: MULTIPLE: the command to start again each time it ends, until Esc
+        self.repeat_name: str | None = None
         self.snap_engine: Optional[SnapEngine] = None
         self.snap_hit: Optional[SnapHit] = None
         self._cursor: Optional[tuple[float, float]] = None
@@ -1166,8 +1168,20 @@ class ToolController(QObject):
             self.window.viewport.set_ghost_scene(None)
         self._clear_preview()
         self.changed.emit()
+        if self.repeat_name:
+            # MULTIPLE: the command ended by itself -- start it again, once
+            # this one has fully unwound
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(0, self._repeat)
+
+    def _repeat(self) -> None:
+        name = self.repeat_name
+        if name and self.tool is None:
+            self.window.dispatcher.submit(name)
 
     def cancel(self) -> None:
+        self.repeat_name = None          # Esc ends MULTIPLE too
         self.reset_pick_cycle()
         if self._grip_drag is not None and self._grip_drag[0] == _VP_GRIP:
             # Esc mid-drag of a viewport grip: nothing was mutated yet
