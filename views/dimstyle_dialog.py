@@ -209,6 +209,59 @@ def _dspin(value, lo=0.0, hi=1e6, dec=3, step=0.1) -> QDoubleSpinBox:
     return s
 
 
+#: The Description's names for the variables a style sets (AutoCAD's
+#: manager writes "Arrow size = 2", not "dimasz = 2.0"); anything else
+#: shows as its system variable, DIMxxx.
+DESCRIPTION_LABELS = {
+    "annotative": "Annotative",
+    "dimadec": "Angular precision",
+    "dimasz": "Arrow size",
+    "dimaunit": "Angular unit format",
+    "dimblk": "Arrowhead",
+    "dimblk1": "First arrowhead",
+    "dimblk2": "Second arrowhead",
+    "dimcen": "Center mark size",
+    "dimclrd": "Dimension line color",
+    "dimclre": "Extension line color",
+    "dimclrt": "Text color",
+    "dimdec": "Precision",
+    "dimdle": "Extend beyond ticks",
+    "dimdli": "Baseline spacing",
+    "dimdsep": "Decimal separator",
+    "dimexe": "Extend beyond dim lines",
+    "dimexo": "Offset from origin",
+    "dimfxl": "Fixed extension line length",
+    "dimfxlon": "Fixed length extension lines",
+    "dimgap": "Offset from dim line",
+    "dimjust": "Text horizontal position",
+    "dimldrblk": "Leader arrowhead",
+    "dimlfac": "Measurement scale factor",
+    "dimlunit": "Unit format",
+    "dimrnd": "Round off",
+    "dimscale": "Overall scale",
+    "dimsd1": "Suppress dim line 1",
+    "dimsd2": "Suppress dim line 2",
+    "dimse1": "Suppress ext line 1",
+    "dimse2": "Suppress ext line 2",
+    "dimtad": "Text vertical position",
+    "dimtix": "Always keep text between ext lines",
+    "dimtofl": "Draw dim line between ext lines",
+    "dimtxsty": "Text style",
+    "dimtxt": "Text height",
+    "dimupt": "Place text manually",
+}
+
+
+def _description_value(value) -> str:
+    """A value as the Description shows it: numbers without trailing
+    zeros, on/off for switches."""
+    if isinstance(value, bool):
+        return tr("On") if value else tr("Off")
+    if isinstance(value, float):
+        return f"{value:.4f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
 class DimStyleEditorDialog(QDialog):
     """The New/Modify Dimension Style dialog: 5 tabs + live preview."""
 
@@ -721,10 +774,11 @@ class DimStyleManagerDialog(QDialog):
         if name == current:
             self.description.setText(name)
         else:
-            cur = style_ops.dim_style_attribs(self.document, current)
-            diffs = [f"{k} = {v}" for k, v in sorted(attribs.items())
-                     if cur.get(k) != v]
-            text = current + (" + " + ", ".join(diffs[:12]) if diffs else "")
+            diffs = [f"{tr(DESCRIPTION_LABELS.get(k, k.upper()))} = "
+                     f"{_description_value(v)}"
+                     for k, v in style_ops.dim_style_differences(
+                         self.document, name, current)]
+            text = current + (" + " + ", ".join(diffs) if diffs else "")
             self.description.setText(text)
 
     # -- actions ---------------------------------------------------------------

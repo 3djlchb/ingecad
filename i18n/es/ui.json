@@ -1958,5 +1958,21 @@
   "Enter linetype pattern (on next line):": "Indique patrón de tipo de línea (en la línea siguiente):",
   "Invalid linetype pattern.": "Patrón de tipo de línea no válido.",
   "New linetype definition saved to file.": "Nueva definición de tipo de línea guardada en el archivo.",
-  "{n} object(s) already supported {scale}.": "{n} objeto(s) ya admitían {scale}."
+  "{n} object(s) already supported {scale}.": "{n} objeto(s) ya admitían {scale}.",
+  "Angular precision": "Precisión angular",
+  "Angular unit format": "Formato de unidades angulares",
+  "Arrowhead": "Flecha",
+  "First arrowhead": "Primera flecha",
+  "Second arrowhead": "Segunda flecha",
+  "Center mark size": "Tamaño de marca de centro",
+  "Dimension line color": "Color de línea de cota",
+  "Extension line color": "Color de línea de referencia",
+  "Fixed extension line length": "Longitud fija de línea de referencia",
+  "Text horizontal position": "Posición horizontal del texto",
+  "Leader arrowhead": "Flecha de directriz",
+  "Suppress dim line 1": "Suprimir línea de cota 1",
+  "Suppress dim line 2": "Suprimir línea de cota 2",
+  "Suppress ext line 1": "Suprimir línea de referencia 1",
+  "Suppress ext line 2": "Suprimir línea de referencia 2",
+  "Text vertical position": "Posición vertical del texto"
 }
