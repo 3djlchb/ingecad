@@ -192,6 +192,23 @@ def _axes_vertices() -> np.ndarray:
     return data
 
 
+def dyn_tooltip_origin(cx: float, cy: float, width: float, height: float,
+                       canvas_w: float, canvas_h: float) -> tuple[float, float]:
+    """Top-left of the dynamic-input tooltip: below-right of the cursor,
+    flipped to the other side when it does not fit -- and always inside the
+    canvas. Flipped left with a long prompt (DIMLINEAR's options) on a
+    narrow canvas, it used to start at a negative x and lose its beginning
+    and the live distance (Rafael's seventh review, 13:09)."""
+    x, y = cx + 18, cy + 18
+    if x + width > canvas_w:
+        x = cx - 18 - width
+    if y + height > canvas_h:
+        y = cy - 18 - height
+    x = max(2.0, min(x, canvas_w - width - 2))
+    y = max(2.0, min(y, canvas_h - height - 2))
+    return x, y
+
+
 class Viewport(QOpenGLWidget):
     """Model-space canvas. Owns the view transform; documents plug in at F1."""
 
@@ -1766,14 +1783,15 @@ class Viewport(QOpenGLWidget):
         if not lines:
             return
         fm = p.fontMetrics()
+        room = max(40, self.width() - 4)
+        if max(fm.horizontalAdvance(line) for line in lines) + 12 > room:
+            # wider than the whole canvas: cut the text, never the box
+            lines = [fm.elidedText(line, Qt.ElideRight, room - 12)
+                     for line in lines]
         width = max(fm.horizontalAdvance(line) for line in lines) + 12
         height = fm.height() * len(lines) + 8
-        x = pos.x() + 18
-        y = pos.y() + 18
-        if x + width > self.width():
-            x = pos.x() - 18 - width
-        if y + height > self.height():
-            y = pos.y() - 18 - height
+        x, y = dyn_tooltip_origin(pos.x(), pos.y(), width, height,
+                                  self.width(), self.height())
         p.save()
         p.setPen(QPen(QColor(90, 90, 90), 1))
         p.setBrush(QColor(250, 250, 210, 230))
