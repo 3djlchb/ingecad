@@ -307,3 +307,11 @@ def test_load_from_the_layers_panel_loads_and_sets_the_layer(qapp, purged_first)
     finally:
         win.document.dirty = False
         win.close()
+
+
+def test_a_new_drawing_carries_only_continuous_as_acadiso_dwt():
+    """AutoCAD's acadiso.dwt loads no linetype but Continuous; the rest come
+    from acadiso.lin when wanted, with its millimetre values. IngeCAD's new
+    drawings carried 18 of ezdxf's, with values neither file has."""
+    document = Document.new()
+    assert lt_ops.loaded_names(document) == ["Continuous"]

@@ -107,13 +107,14 @@ class Document:
 
     @classmethod
     def new(cls) -> "Document":
-        # Load the standard linetypes (needed for linetype rendering) but not
-        # ezdxf's full style/dimstyle setup — a new AutoCAD drawing carries
-        # only a couple of established styles, not dozens of OpenSans/EZ_*
-        # entries. install_default_styles seeds the metric ISO-25 dim style.
+        # Not ezdxf's setup: a new AutoCAD drawing (acadiso.dwt) carries
+        # only Continuous -- the rest are loaded from acadiso.lin when wanted,
+        # with its millimetre values, not ezdxf's preloaded ones -- and only a
+        # couple of established styles, not dozens of OpenSans/EZ_* entries.
+        # install_default_styles seeds the metric ISO-25 dim style.
         from core import styles as _styles
 
-        document = cls(ezdxf.new("R2018", setup=["linetypes"]))
+        document = cls(ezdxf.new("R2018", setup=False))
         _styles.install_default_styles(document)
         # AutoCAD's templates: MIRROR keeps text readable. ezdxf's own
         # default is 1 (mirror writing).
