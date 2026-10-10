@@ -198,7 +198,8 @@ class Dispatcher:
 
 def dress_new_entity(document, entity, layer: str | None = None) -> None:
     """Give a new entity the CURRENT properties, the ones the Properties
-    bar sets: layer, colour, linetype, lineweight. They default to ByLayer,
+    bar sets: layer, colour, linetype, lineweight -- and the current object
+    linetype scale (CELTSCALE). They default to ByLayer,
     so a drawing stays layer-driven unless the user overrides it on purpose
     -- and a command that already chose (OFFSET keeping the source's layer,
     a factory that set a colour) keeps what it chose."""
@@ -215,6 +216,18 @@ def dress_new_entity(document, entity, layer: str | None = None) -> None:
         if value != layer_ops.CURRENT_DEFAULTS[prop]:
             try:
                 entity.dxf.set(prop, value)
+            except Exception:
+                pass
+    # CELTSCALE, the Linetype Manager's "Current object scale": every new
+    # object takes it as its own linetype scale (AutoCAD; 1.0 writes nothing)
+    if not entity.dxf.hasattr("ltscale"):
+        try:
+            celtscale = float(document.doc.header.get("$CELTSCALE", 1.0))
+        except (TypeError, ValueError):
+            celtscale = 1.0
+        if celtscale > 0 and abs(celtscale - 1.0) > 1e-12:
+            try:
+                entity.dxf.ltscale = celtscale
             except Exception:
                 pass
 

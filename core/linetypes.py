@@ -151,6 +151,61 @@ def library_names() -> list[str]:
     return ["CONTINUOUS"] + names
 
 
+def parse_lin(text: str) -> dict[str, tuple[str, list[float] | str]]:
+    """Read a LIN file: ``{NAME: (description, definition)}``.
+
+    A simple definition is its dash list, as :data:`STANDARD` holds them. A
+    complex one -- a line carrying text or shapes in brackets, GAS_LINE's
+    ``["GAS",STANDARD,S=2.54,...]`` -- is kept as the LIN pattern line itself
+    (``"A,12.7,-5.08,[...],-2.54"``), which is what ezdxf builds it from.
+    Comments start with ``;;``; a pattern may continue on the next line after
+    a trailing comma, as AutoCAD's own files do for the long ones.
+    """
+    entries: dict[str, tuple[str, list[float] | str]] = {}
+    name = description = None
+    pattern = ""
+    for raw in text.splitlines():
+        line = raw.split(";;", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("*"):
+            head, _, desc = line[1:].partition(",")
+            name, description, pattern = head.strip(), desc.strip(), ""
+            continue
+        if name is None:
+            continue
+        pattern += line
+        if pattern.endswith(","):
+            continue                     # the definition goes on below
+        body = pattern
+        if body[:2].upper() == "A,":
+            body = body[2:]
+        if "[" in body:
+            entries[name.upper()] = (description, "A," + body)
+        else:
+            try:
+                dashes = [float(v) for v in body.split(",") if v.strip()]
+            except ValueError:
+                dashes = None            # a line we cannot read: skip it
+            if dashes is not None:
+                entries[name.upper()] = (description, dashes)
+        name, pattern = None, ""
+    return entries
+
+
+def read_lin_file(path) -> dict[str, tuple[str, list[float] | str]]:
+    """``parse_lin`` of a file on disk. LIN files from AutoCAD are ANSI
+    (cp1252); one that is valid UTF-8 is read as such."""
+    from pathlib import Path
+
+    data = Path(path).read_bytes()
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        text = data.decode("cp1252", errors="replace")
+    return parse_lin(text)
+
+
 def description_of(document, name: str) -> str:
     """What the drawing says this linetype is, or the library's wording."""
     try:
@@ -214,38 +269,206 @@ def loadable_names(document) -> list[str]:
 class LoadLinetypesCommand(Command):
     """Load linetype definitions into the drawing (AutoCAD's Load button).
 
+    ``catalog`` is where the definitions come from: the standard library by
+    default, or a LIN file the user picked (``read_lin_file``). Names the
+    drawing already has are skipped unless they are listed in ``reload`` --
+    AutoCAD's "Linetype X is already loaded. Reload it?" answered Yes --
+    which redefines them in place, keeping the entry (and its handle) and
+    so every object that uses it.
+
     Undoable: loading writes LTYPE table entries, which is a change to the
-    document like any other. Nothing is drawn differently until something
-    uses them, so no regen is needed.
+    document like any other; undo removes what was added and puts the old
+    definition back on what was reloaded.
     """
 
-    def __init__(self, names: Iterable[str]) -> None:
+    needs_regen = True
+
+    def __init__(self, names: Iterable[str], catalog=None,
+                 reload: Iterable[str] = ()) -> None:
         self.names = [n for n in names]
+        self.catalog = catalog
+        self.reload = {n.upper() for n in reload}
         self.name = "LINETYPE Load"
         self._added: list[str] = []
+        self._reloaded: list[tuple] = []
+
+    def _source(self):
+        return self.catalog if self.catalog is not None else library()
 
     def do(self, document) -> None:
         self._added = []
+        self._reloaded = []
         table = document.doc.linetypes
+        source = self._source()
         for name in self.names:
-            found = library().get(name.upper())
-            if found is None or table.has_entry(name):
+            found = source.get(name.upper())
+            if found is None or name.upper() in RESERVED:
                 continue
             description, pattern = found
+            if table.has_entry(name):
+                if name.upper() not in self.reload:
+                    continue
+                entry = table.get(name)
+                old = (entry, entry.pattern_tags,
+                       entry.dxf.get("description", ""))
+                try:
+                    _setup(entry, pattern, description)
+                except Exception:
+                    continue
+                self._reloaded.append(old)
+                continue
             try:
-                table.add(name=name, pattern=ezdxf_pattern(pattern),
-                          description=description)
+                if isinstance(pattern, str):
+                    table.add(name=name, pattern=pattern,
+                              description=description)
+                else:
+                    table.add(name=name, pattern=ezdxf_pattern(pattern),
+                              description=description)
             except Exception:
                 continue
             self._added.append(name)
-        if self._added:
+        if self._added or self._reloaded:
             document.dirty = True
 
     def undo(self, document) -> None:
+        for entry, tags, description in reversed(self._reloaded):
+            entry.pattern_tags = tags      # carries the length (group 40)
+            entry.dxf.description = description
         for name in self._added:
             try:
                 document.doc.linetypes.remove(name)
             except Exception:
                 pass
-        if self._added:
+        if self._added or self._reloaded:
             document.dirty = True
+
+
+def _setup(entry, pattern, description: str) -> None:
+    """Redefine a loaded linetype in place (Reload)."""
+    if isinstance(pattern, str):
+        # a complex pattern names its text style, resolved through the doc
+        entry.setup_pattern(pattern, 0.0)
+    else:
+        entry.setup_pattern(ezdxf_pattern(pattern))
+    entry.dxf.description = description
+
+
+def is_xref_dependent(name: str) -> bool:
+    """``XREF|NAME``: a linetype that came in with an external reference.
+    AutoCAD lists them but will not rename or delete them."""
+    return "|" in name
+
+
+def unused_names(document) -> list[str]:
+    """Loaded linetypes no object, layer, style or setting uses -- the ones
+    the Linetype Manager may Delete. Same answer PURGE gives."""
+    from core.cleanup import used_linetypes
+
+    used = used_linetypes(document.doc)
+    return [n for n in loaded_names(document)
+            if n.upper() not in used and not is_xref_dependent(n)]
+
+
+class RenameLinetypeCommand(Command):
+    """Rename a linetype and every reference to it by name: objects in all
+    layouts and blocks, layers, dimension styles and $CELTYPE. AutoCAD
+    renames in place in the manager's list; BYLAYER, BYBLOCK, CONTINUOUS and
+    xref-dependent linetypes cannot be renamed."""
+
+    name = "LINETYPE Rename"
+    needs_regen = True
+
+    def __init__(self, old_name: str, new_name: str) -> None:
+        self.old_name = old_name
+        self.new_name = new_name
+        self._changed: list[tuple] = []
+
+    @staticmethod
+    def check(document, old_name: str, new_name: str) -> str | None:
+        """Why this rename is refused, or None. Messages are translatable
+        keys with ``{name}``."""
+        new = new_name.strip()
+        if old_name.upper() in RESERVED or is_xref_dependent(old_name):
+            return "Linetype {name} cannot be renamed."
+        if not new or any(c in new for c in '<>/\\":;?*|,=`'):
+            return "Invalid linetype name."
+        if new.upper() != old_name.upper() and \
+                document.doc.linetypes.has_entry(new):
+            return "Linetype {name} already exists."
+        return None
+
+    def _rename(self, document, old: str, new: str) -> list[tuple]:
+        doc = document.doc
+        changed = []
+        up = old.upper()
+        entry = doc.linetypes.get(old)
+        changed.append(("entry", entry, entry.dxf.name))
+        # the table is keyed by name: take the entry out under its old key
+        doc.linetypes.discard(old)
+        entry.dxf.name = new
+        doc.linetypes.add_entry(entry)
+        for layout in list(doc.layouts) + list(doc.blocks):
+            for e in layout:
+                if str(e.dxf.get("linetype", "")).upper() == up:
+                    changed.append(("attr", e, "linetype", e.dxf.linetype))
+                    e.dxf.linetype = new
+        for layer in doc.layers:
+            if str(layer.dxf.get("linetype", "")).upper() == up:
+                changed.append(("attr", layer, "linetype", layer.dxf.linetype))
+                layer.dxf.linetype = new
+        for style in doc.dimstyles:
+            for attr in ("dimltype", "dimltex1", "dimltex2"):
+                if str(style.dxf.get(attr, "")).upper() == up:
+                    changed.append(("attr", style, attr, style.dxf.get(attr)))
+                    style.dxf.set(attr, new)
+        if str(doc.header.get("$CELTYPE", "")).upper() == up:
+            changed.append(("header", "$CELTYPE", doc.header["$CELTYPE"]))
+            doc.header["$CELTYPE"] = new
+        return changed
+
+    def do(self, document) -> None:
+        self._changed = self._rename(document, self.old_name, self.new_name)
+        document.dirty = True
+
+    def undo(self, document) -> None:
+        doc = document.doc
+        for record in reversed(self._changed):
+            if record[0] == "attr":
+                _k, obj, attr, value = record
+                obj.dxf.set(attr, value)
+            elif record[0] == "header":
+                doc.header[record[1]] = record[2]
+            else:
+                _k, entry, name = record
+                doc.linetypes.discard(entry.dxf.name)
+                entry.dxf.name = name
+                doc.linetypes.add_entry(entry)
+        document.dirty = True
+
+
+class LinetypeDescriptionCommand(Command):
+    """Edit a linetype's description (the manager's Details > Description)."""
+
+    name = "LINETYPE Description"
+
+    def __init__(self, linetype: str, description: str) -> None:
+        self.linetype = linetype
+        self.description = description
+        self._old = ""
+
+    def do(self, document) -> None:
+        entry = document.doc.linetypes.get(self.linetype)
+        self._old = entry.dxf.get("description", "")
+        entry.dxf.description = self.description
+        document.dirty = True
+
+    def undo(self, document) -> None:
+        document.doc.linetypes.get(self.linetype).dxf.description = self._old
+        document.dirty = True
+
+
+#: ISO pen widths offered by the manager's Details, in millimetres. An
+#: ACAD_ISOnnW100 linetype is defined for a 1.00 mm pen, so the scale it
+#: takes is the width itself (reference p. 1046: "Sets the linetype scale
+#: to one of a list of standard ISO values").
+ISO_PEN_WIDTHS = (0.13, 0.18, 0.25, 0.35, 0.5, 0.7, 1.0, 1.4, 2.0)
