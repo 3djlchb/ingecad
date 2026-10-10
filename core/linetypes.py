@@ -472,3 +472,293 @@ class LinetypeDescriptionCommand(Command):
 #: takes is the width itself (reference p. 1046: "Sets the linetype scale
 #: to one of a list of standard ISO values").
 ISO_PEN_WIDTHS = (0.13, 0.18, 0.25, 0.35, 0.5, 0.7, 1.0, 1.4, 2.0)
+
+
+# -- the standard library as a LIN file, and -LINETYPE ---------------------------
+
+def lin_text(entries: dict) -> str:
+    """``entries`` written as a LIN file, the way AutoCAD's own are."""
+    lines = [";;", ";;  IngeCAD standard linetypes", ";;"]
+    for name in sorted(n for n in entries if n not in RESERVED):
+        description, pattern = entries[name]
+        lines.append(f"*{name},{description}")
+        if isinstance(pattern, str):
+            lines.append(pattern)
+        else:
+            lines.append("A," + ",".join(f"{v:g}" for v in pattern))
+    return "\n".join(lines) + "\n"
+
+
+def standard_lin_file():
+    """The standard library as a real LIN file, written where IngeCAD keeps
+    its data -- what -LINETYPE's file dialogs propose, as AutoCAD proposes
+    acad.lin, so pressing Open loads the standard linetypes."""
+    from pathlib import Path
+
+    from PySide6.QtCore import QStandardPaths
+
+    base = QStandardPaths.writableLocation(QStandardPaths.GenericDataLocation)
+    folder = Path(base or Path.home() / ".local" / "share") / "IngeCAD"
+    path = folder / "ingecad.lin"
+    text = lin_text(library())
+    try:
+        if not path.is_file() or path.read_text(encoding="utf-8") != text:
+            folder.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+    return path
+
+
+def _matching(entries: dict, spec: str) -> list[str]:
+    """Names in ``entries`` matching a -LINETYPE list: comma-separated, with
+    the * and ? wildcards, case-insensitive."""
+    from fnmatch import fnmatchcase
+
+    wanted = [p.strip().upper() for p in spec.split(",") if p.strip()]
+    names = sorted(n for n in entries if n.upper() not in RESERVED)
+    return [n for n in names if any(fnmatchcase(n.upper(), w) for w in wanted)]
+
+
+def linetype_command(document, execute, echo, pick_file, args=()):
+    """-LINETYPE (reference pp. 1047-1048), headless.
+
+    ``pick_file(caption, save)`` stands for AutoCAD's Select Linetype File /
+    Create or Append Linetype File dialogs and returns a path, or "" on
+    Cancel. ``execute`` runs a Command undoably.
+    """
+    from pathlib import Path
+
+    from core.actions import Prompt
+    from core.attributes import SetHeaderCommand
+    from core.i18n import keywords, tr
+
+    queue = list(args)
+    main_source = "Enter an option [?/Create/Load/Set]:"
+
+    def step(text, handler):
+        if queue:
+            return handler(queue.pop(0))
+        return Prompt(text, handler)
+
+    def main():
+        return step(tr(main_source), on_option)
+
+    def on_option(text: str):
+        text = text.strip()
+        if not text:
+            return None
+        if text == "?":
+            return list_file()
+        key = keywords.match(text, main_source)
+        if key == "C":
+            return step(tr("Enter name of linetype to create:"), on_create_name)
+        if key == "L":
+            return step(tr("Enter linetype(s) to load:"), on_load_names)
+        if key == "S":
+            return ask_set()
+        echo(tr("Invalid option keyword."))
+        return main()
+
+    # -- ? --------------------------------------------------------------------
+    def list_file():
+        path = pick_file(tr("Select Linetype File"), False)
+        if path:
+            try:
+                entries = read_lin_file(path)
+            except OSError:
+                entries = {}
+            echo(tr("Linetypes defined in file {file}:", file=path))
+            echo(f"{tr('Name'):<20}{tr('Description')}")
+            echo("-" * 60)
+            for name in sorted(entries):
+                echo(f"{name:<20}{entries[name][0]}")
+        return main()
+
+    # -- Load -------------------------------------------------------------------
+    def on_load_names(spec: str):
+        if not spec.strip():
+            return main()
+        path = pick_file(tr("Select Linetype File"), False)
+        if not path:
+            return main()
+        try:
+            entries = read_lin_file(path)
+        except OSError:
+            entries = {}
+        names = _matching(entries, spec)
+        if not names:
+            echo(tr("No matching linetypes found in {file}.", file=path))
+            return main()
+        loaded = {n.upper() for n in loaded_names(document)}
+        fresh = [n for n in names if n.upper() not in loaded]
+        again = [n for n in names if n.upper() in loaded]
+        reload: list[str] = []
+        source = "Linetype {name} is already loaded. Reload it? [Yes/No] <Yes>:"
+
+        def ask_reload():
+            if not again:
+                return finish()
+            return step(tr(source, name=again[0]), on_reload)
+
+        def on_reload(text: str):
+            name = again.pop(0)
+            if not text.strip() or keywords.match(text, source) == "Y":
+                reload.append(name)
+            return ask_reload()
+
+        def finish():
+            wanted = fresh + reload
+            if wanted:
+                execute(LoadLinetypesCommand(wanted, catalog=entries,
+                                             reload=reload))
+                for name in fresh:
+                    echo(tr("Linetype {name} loaded.", name=name))
+                for name in reload:
+                    echo(tr("Linetype {name} reloaded.", name=name))
+            return main()
+
+        return ask_reload()
+
+    # -- Set ----------------------------------------------------------------------
+    def ask_set():
+        current = str(document.doc.header.get("$CELTYPE", "ByLayer"))
+        return step(tr("Specify linetype name or [?] <{current}>:",
+                       current=current), on_set)
+
+    def on_set(text: str):
+        name = text.strip()
+        if not name:
+            return main()
+        if name == "?":
+            return step(tr("Enter linetype(s) to list <*>:"), on_list_loaded)
+        if name.upper() in ("BYLAYER", "BYBLOCK"):
+            value = "ByLayer" if name.upper() == "BYLAYER" else "ByBlock"
+        else:
+            table = document.doc.linetypes
+            if table.has_entry(name):
+                value = table.get(name).dxf.name
+            elif name.upper() in library():
+                # not loaded: AutoCAD looks it up in acad.lin and loads it
+                execute(LoadLinetypesCommand([name.upper()]))
+                value = name.upper()
+            else:
+                echo(tr("Linetype {name} not found. Use the Load option to "
+                        "load it.", name=name))
+                return None
+        execute(SetHeaderCommand("$CELTYPE", value, "CELTYPE"))
+        return main()
+
+    def on_list_loaded(spec: str):
+        spec = spec.strip() or "*"
+        entries = {n: (description_of(document, n), None)
+                   for n in loaded_names(document)}
+        names = _matching(entries, spec)
+        if spec == "*":
+            names = ["ByLayer", "ByBlock"] + names
+        echo(f"{tr('Linetype'):<20}{tr('Description')}")
+        echo("-" * 60)
+        for name in names:
+            echo(f"{name:<20}{entries.get(name, ('', None))[0]}")
+        return ask_set()
+
+    # -- Create ---------------------------------------------------------------------
+    created: dict = {}
+
+    def on_create_name(text: str):
+        name = text.strip()
+        if not name:
+            return main()
+        if any(c in name for c in '<>/\\":;?*|,=`') or name.upper() in RESERVED:
+            echo(tr("Invalid linetype name."))
+            return main()
+        path = pick_file(tr("Create or Append Linetype File"), True)
+        if not path:
+            return main()
+        created.update(name=name, path=path)
+        existing = {}
+        if Path(path).is_file():
+            try:
+                existing = read_lin_file(path)
+            except OSError:
+                existing = {}
+        if name.upper() in existing:
+            description, pattern = existing[name.upper()]
+            echo(tr('"{name}" already exists in this file. Current definition is:',
+                    name=name))
+            echo(f"*{name},{description}")
+            echo(pattern if isinstance(pattern, str)
+                 else "A," + ",".join(f"{v:g}" for v in pattern))
+            return step(tr("Overwrite? [Yes/No] <No>:"), on_overwrite)
+        return ask_description()
+
+    def on_overwrite(text: str):
+        if keywords.match(text, "Overwrite? [Yes/No] <No>:") == "Y":
+            created["overwrite"] = True
+            return ask_description()
+        return main()
+
+    def ask_description():
+        return step(tr("Descriptive text:"), on_description)
+
+    def on_description(text: str):
+        created["description"] = text.strip()[:47]      # AutoCAD's limit
+        echo(tr("Enter linetype pattern (on next line):"))
+        return step("A,", on_pattern)
+
+    def on_pattern(text: str):
+        body = text.strip()
+        if body[:2].upper() == "A,":
+            body = body[2:]
+        try:
+            dashes = [float(v) for v in body.split(",") if v.strip()]
+        except ValueError:
+            dashes = []
+        if len(dashes) < 2 or "[" in body:
+            # complex linetypes cannot be made with LINETYPE (the reference)
+            echo(tr("Invalid linetype pattern."))
+            return step("A,", on_pattern)
+        _write_definition(created["path"], created["name"],
+                          created["description"], dashes,
+                          created.get("overwrite", False))
+        echo(tr("New linetype definition saved to file."))
+        return main()
+
+    current = str(document.doc.header.get("$CELTYPE", "ByLayer"))
+    echo(tr('Current line type: "{name}"', name=current))
+    return main()
+
+
+def _write_definition(path, name: str, description: str, dashes, overwrite):
+    """Append a simple definition to a LIN file, or replace its old one."""
+    from pathlib import Path
+
+    target = Path(path)
+    if target.suffix.lower() != ".lin":
+        target = target.with_suffix(".lin")
+    text = ""
+    if target.is_file():
+        data = target.read_bytes()
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("cp1252", errors="replace")
+    block = f"*{name},{description}\nA," + ",".join(f"{v:g}" for v in dashes) + "\n"
+    if overwrite:
+        out, skip = [], False
+        for line in text.splitlines():
+            if line.startswith("*"):
+                skip = line[1:].split(",", 1)[0].strip().upper() == name.upper()
+                if skip:
+                    continue
+            elif skip:
+                if line.strip() and not line.strip().startswith(";;"):
+                    # the pattern line(s) of the old definition
+                    if not line.rstrip().endswith(","):
+                        skip = False
+                    continue
+            out.append(line)
+        text = "\n".join(out)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    target.write_text(text + block, encoding="utf-8")

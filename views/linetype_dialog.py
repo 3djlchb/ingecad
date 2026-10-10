@@ -258,7 +258,10 @@ class LoadLinetypesDialog(QDialog):
         self.file_button = QPushButton(tr("File..."), self)
         self.file_button.clicked.connect(self._pick_file)
         file_row.addWidget(self.file_button)
-        self.file_name = QLineEdit(tr("(standard library)"), self)
+        # the standard library is a real LIN file too (as acad.lin is)
+        standard = lt_ops.standard_lin_file()
+        self.file_name = QLineEdit(standard.name, self)
+        self.file_name.setToolTip(str(standard))
         self.file_name.setReadOnly(True)
         file_row.addWidget(self.file_name, 1)
         layout.addLayout(file_row)
@@ -323,6 +326,7 @@ class LoadLinetypesDialog(QDialog):
         self.catalog = entries
         self.source_path = str(path)
         self.file_name.setText(Path(path).name)
+        self.file_name.setToolTip(str(path))
         self._fill()
         return True
 
@@ -331,7 +335,9 @@ class LoadLinetypesDialog(QDialog):
 
         path = get_open_file(self, tr("Select Linetype File"),
                              tr("Linetype files (*.lin)") + ";;"
-                             + tr("All files (*)"))
+                             + tr("All files (*)"),
+                             select_file=self.source_path
+                             or lt_ops.standard_lin_file())
         if path and not self.load_file(path):
             QMessageBox.warning(self, tr("Load or Reload Linetypes"),
                                 tr("No linetype definitions found in {name}.",

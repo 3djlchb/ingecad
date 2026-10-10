@@ -117,6 +117,8 @@ DEFAULT_ALIASES: dict[str, str] = {
     "LTS": "LTSCALE",
     "LT": "LINETYPE",
     "LTYPE": "LINETYPE",
+    "-LT": "-LINETYPE",
+    "-LTYPE": "-LINETYPE",
     "S": "STRETCH",
     "BR": "BREAK",
     "J": "JOIN",

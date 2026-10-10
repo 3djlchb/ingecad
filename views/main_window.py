@@ -3907,6 +3907,7 @@ class MainWindow(QMainWindow):
         for name in ("OVERKILL", "-OVERKILL", "WBLOCK", "-WBLOCK"):
             d.register(name, lambda *a, n=name: self.tools.start_tool(n))
         d.register("LINETYPE", self._cmd_linetype)
+        d.register("-LINETYPE", self._cmd_linetype_cli)
 
     # -- MSPACE / PSPACE (activate a viewport; ZOOM nXP sets its scale) ---------
     def _cmd_mspace(self, *args) -> None:
@@ -4753,6 +4754,31 @@ class MainWindow(QMainWindow):
         self._props_combo_key = None          # loaded/renamed linetypes
         self._refresh_props_toolbar()
         self._sync_panels()
+
+    def _cmd_linetype_cli(self, *args) -> Prompt | None:
+        """-LINETYPE: AutoCAD's prompt flow (?/Create/Load/Set)."""
+        if self.document is None:
+            self.new_document()
+        from core import linetypes as lt_ops
+
+        def pick_file(caption: str, save: bool) -> str:
+            standard = lt_ops.standard_lin_file()
+            name_filter = tr("Linetype files (*.lin)")
+            if save:
+                path, _selected = file_dialogs.get_save_file(
+                    self, caption, "custom.lin", name_filter)
+                return path
+            return file_dialogs.get_open_file(self, caption, name_filter,
+                                              select_file=standard)
+
+        def execute(command) -> None:
+            self.tools._execute(command)
+            self._props_combo_key = None
+            self._refresh_props_toolbar()
+
+        return lt_ops.linetype_command(
+            self.document, execute, echo=self.command_line.echo,
+            pick_file=pick_file, args=args)
 
     def _cmd_ltscale(self, *args) -> Prompt | None:
         """LTSCALE — global linetype scale; changing it regenerates."""

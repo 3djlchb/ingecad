@@ -129,10 +129,19 @@ def host_path(filename: str) -> str:
 
 
 def get_open_file(parent, caption: str, name_filter: str,
-                  preferred: Path | str | None = None) -> str:
-    """``QFileDialog.getOpenFileName`` that starts somewhere real."""
+                  preferred: Path | str | None = None,
+                  select_file: Path | str | None = None) -> str:
+    """``QFileDialog.getOpenFileName`` that starts somewhere real.
+
+    ``select_file`` opens on that file, already selected, when its folder is
+    one the host can show -- AutoCAD's Select Linetype File on acad.lin.
+    """
+    where = start_dir(preferred if select_file is None else select_file)
+    if select_file is not None and Path(select_file).is_file() \
+            and Path(where) == Path(select_file).parent.resolve():
+        where = str(Path(where) / Path(select_file).name)
     filename, _selected = QFileDialog.getOpenFileName(
-        parent, caption, start_dir(preferred), name_filter)
+        parent, caption, where, name_filter)
     filename = host_path(filename)
     remember(filename)
     return filename

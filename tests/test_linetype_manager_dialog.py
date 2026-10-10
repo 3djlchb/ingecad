@@ -286,3 +286,29 @@ def test_the_properties_bar_other_opens_the_manager(qapp):
     finally:
         win.document.dirty = False
         win.close()
+
+
+def test_dash_lt_typed_in_the_window_loads_from_the_proposed_file(qapp, monkeypatch):
+    """-LT, L, a name, and the file dialog's Open on the file it proposes."""
+    from views import file_dialogs
+
+    proposed = []
+
+    def fake_open(parent, caption, name_filter, preferred=None, select_file=None):
+        proposed.append(select_file)
+        return str(select_file)
+
+    monkeypatch.setattr(file_dialogs, "get_open_file", fake_open)
+    win = _window(qapp)
+    try:
+        for text in ("-LT", "L", "ACAD_ISO10W100", ""):
+            _type(win, text)
+        assert proposed and proposed[0] == lt_ops.standard_lin_file()
+        assert win.document.doc.linetypes.has_entry("ACAD_ISO10W100")
+        combo = win._linetype_combo
+        assert combo.findData("ACAD_ISO10W100") >= 0, "the bar did not refresh"
+        win._cmd_undo()
+        assert not win.document.doc.linetypes.has_entry("ACAD_ISO10W100")
+    finally:
+        win.document.dirty = False
+        win.close()

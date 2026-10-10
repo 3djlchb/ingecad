@@ -149,3 +149,92 @@ def test_new_objects_take_the_current_object_linetype_scale():
     other = actions.add_line((0, 1), (10, 1))
     other.do(document)
     assert not other.entity.dxf.hasattr("ltscale"), "1.0 should write nothing"
+
+
+# -- -LINETYPE -----------------------------------------------------------------------
+
+def _drive(document, answers, files=(), executed=None):
+    """Run -LINETYPE answering each prompt in turn; returns (echo, prompts)."""
+    lines: list[str] = []
+    prompts: list[str] = []
+    picks = list(files)
+
+    def execute(command):
+        command.do(document)
+        if executed is not None:
+            executed.append(command)
+
+    prompt = lt_ops.linetype_command(document, execute, lines.append,
+                                     lambda caption, save: picks.pop(0))
+    for answer in answers:
+        assert prompt is not None, f"the command ended before {answer!r}"
+        prompts.append(prompt.text)
+        prompt = prompt.on_input(answer)
+    assert prompt is None or answers[-1] == "", "the command did not end"
+    return lines, prompts
+
+
+def test_dash_linetype_load_with_wildcards_and_reload(tmp_path):
+    lin = tmp_path / "mine.lin"
+    lin.write_text(LIN, encoding="utf-8")
+    document = _document()
+    lines, prompts = _drive(document, ["L", "acad_iso*,long", ""], [str(lin)])
+    assert prompts[0] == "Enter an option [?/Create/Load/Set]:"
+    assert "Enter linetype(s) to load:" in prompts
+    assert {"ACAD_ISO02W100", "LONG"} <= set(lt_ops.loaded_names(document))
+    assert "Linetype LONG loaded." in lines
+    # again: AutoCAD asks before reloading, Enter means Yes
+    lin.write_text("*LONG,new\nA,30,-3\n", encoding="utf-8")
+    lines, prompts = _drive(document, ["L", "LONG", "", ""], [str(lin)])
+    assert any("already loaded" in p for p in prompts)
+    assert lt_ops.pattern_of(document, "LONG") == [30.0, -3.0]
+    assert "Linetype LONG reloaded." in lines
+
+
+def test_dash_linetype_set_loads_from_the_library_when_needed():
+    document = _document()
+    _drive(document, ["S", "DASHED", ""])
+    assert document.doc.header["$CELTYPE"] == "DASHED"
+    assert "DASHED" in lt_ops.loaded_names(document), (
+        "Set did not load a library linetype first")
+    _drive(document, ["s", "bylayer", ""])
+    assert document.doc.header["$CELTYPE"] == "ByLayer"
+    lines, _ = _drive(document, ["S", "NOPE"])
+    assert any("not found" in line for line in lines)
+
+
+def test_dash_linetype_create_writes_a_lin_file_and_load_reads_it(tmp_path):
+    target = tmp_path / "custom.lin"
+    document = _document()
+    lines, prompts = _drive(
+        document, ["C", "VALLA", "Valla __ x __", "10,-2,0,-2", ""],
+        [str(target)])
+    assert "A," in prompts
+    assert "New linetype definition saved to file." in lines
+    assert lt_ops.read_lin_file(target)["VALLA"] == (
+        "Valla __ x __", [10.0, -2.0, 0.0, -2.0])
+    # creating it again asks before overwriting; Yes replaces it
+    _drive(document, ["C", "VALLA", "Y", "otra", "5,-5", ""], [str(target)])
+    entries = lt_ops.read_lin_file(target)
+    assert entries["VALLA"] == ("otra", [5.0, -5.0])
+    assert target.read_text(encoding="utf-8").count("*VALLA") == 1
+    _drive(document, ["L", "VALLA", ""], [str(target)])
+    assert lt_ops.pattern_of(document, "VALLA") == [5.0, -5.0]
+
+
+def test_dash_linetype_question_lists_a_file(tmp_path):
+    lin = tmp_path / "mine.lin"
+    lin.write_text(LIN, encoding="utf-8")
+    lines, _ = _drive(_document(), ["?", ""], [str(lin)])
+    assert any(line.startswith("GAS_LINE") for line in lines)
+
+
+def test_the_standard_library_is_a_lin_file_that_reads_back():
+    """-LINETYPE's dialogs propose it, as AutoCAD proposes acad.lin."""
+    path = lt_ops.standard_lin_file()
+    entries = lt_ops.read_lin_file(path)
+    for name, (description, pattern) in lt_ops.library().items():
+        if name in lt_ops.RESERVED:
+            continue
+        assert entries[name][1] == pytest.approx(pattern), name
+        assert entries[name][0] == description.rstrip()
