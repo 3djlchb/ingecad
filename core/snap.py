@@ -811,8 +811,16 @@ class SnapEngine:
                         offer("INT", hit[0], hit[1])
         if "PER" in kinds and from_point is not None and len(near_idx):
             fx, fy = from_point
+            # A foot ON the point it is drawn from is no perpendicular: the
+            # point lies on that very object. It is what a grip dragged
+            # along its own line meets (the line's other end anchors PER),
+            # and taking it pinned the drag to where it started -- "no
+            # consigo menguar esto", a line that would not shorten.
+            same = threshold * 1e-3
             for a in near_idx:
                 p = _project_on_segment(segs[a], fx, fy)
+                if p is not None and math.hypot(p[0] - fx, p[1] - fy) <= same:
+                    continue
                 if p is not None:
                     # AutoCAD lights PER when the aperture is over the
                     # OBJECT, and the marker goes to the foot wherever it

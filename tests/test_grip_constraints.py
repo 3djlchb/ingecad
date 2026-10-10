@@ -85,3 +85,30 @@ def test_a_line_end_dragged_by_its_grip_snaps_perpendicular(qapp):
     finally:
         win.document.dirty = False
         win.close()
+
+
+@pytest.mark.parametrize("modes", [None, {"PER"}])
+def test_a_line_shortens_by_dragging_its_end_grip_along_itself(qapp, modes):
+    """Rafael's seventh review, 29:13-29:37: "no consigo menguar esto" -- the
+    end grip dragged back along the line left it full length. PER measures
+    from the grabbed point, which lies on the line, so its foot was the grip
+    itself and won: the drop landed where the drag began. Lengthening worked,
+    because beyond the end the foot falls off the segment. With the default
+    modes, and with PER alone."""
+    win = _window(qapp)
+    try:
+        win.tools._execute(actions.add_line((0, 0), (48, 0)))
+        line = [e for e in win.document.modelspace() if e.dxftype() == "LINE"][-1]
+        win.viewport.view.zoom_extents(-10, -20, 60, 20)
+        win.tools.ortho_on = False
+        win.tools.osnap_on = True
+        if modes is not None:
+            win.tools.osnap_modes = set(modes)
+        win.tools.selection = {line.dxf.handle}
+        _grab_move_drop(qapp, win, (48, 0), (40, 0), (30, 0))
+        end = line.dxf.end
+        assert (end.x, end.y) == pytest.approx((30, 0), abs=0.3), (
+            "the line did not shorten")
+    finally:
+        win.document.dirty = False
+        win.close()
