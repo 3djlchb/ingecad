@@ -463,6 +463,95 @@ def _body_for(entity) -> list:
     raise ValueError(f"{dxftype} cannot carry scale representations yet")
 
 
+def render_scale_block(dim, scale: Scale) -> dict:
+    """Draw ``dim`` at ``scale`` into a *D block of its own and leave the
+    dimension as it was; the representation fields of that drawing ({group
+    code: value}: the block, the text position, the line's defpoint).
+
+    An annotative dimension is sized by its scale: DIMSCALE = the scale's
+    factor, exactly as one born at that scale is drawn (AddDimensionCommand).
+    """
+    from types import SimpleNamespace
+
+    from core.actions import _stamp_dim_block_byblock
+
+    saved_block = dim.dxf.get("geometry", None)
+    had_mid = dim.dxf.hasattr("text_midpoint")
+    saved_mid = dim.dxf.get("text_midpoint", None)
+    saved_defpoint = dim.dxf.get("defpoint", None)
+    saved_acad = list(dim.get_xdata("ACAD")) if dim.has_xdata("ACAD") else None
+    global _drawing_scale
+    _drawing_scale += 1
+    try:
+        override = dim.override()
+        override["dimscale"] = scale.factor
+        override.render()
+        block = dim.dxf.get("geometry", "")
+        _stamp_dim_block_byblock(SimpleNamespace(doc=dim.doc), dim)
+        mid = dim.dxf.get("text_midpoint", saved_mid) or (0.0, 0.0, 0.0)
+        defpoint = dim.dxf.get("defpoint", saved_defpoint) or (0.0, 0.0, 0.0)
+    finally:
+        _drawing_scale -= 1
+        if saved_block is not None:
+            dim.dxf.geometry = saved_block
+        if had_mid:
+            dim.dxf.text_midpoint = saved_mid
+        else:
+            dim.dxf.discard("text_midpoint")
+        if saved_defpoint is not None:
+            dim.dxf.defpoint = saved_defpoint
+        dim.discard_xdata("ACAD")
+        if saved_acad is not None:
+            dim.set_xdata("ACAD", saved_acad)
+    return {2: block, 10: float(mid[0]), 20: float(mid[1]),
+            11: float(defpoint[0]), 21: float(defpoint[1])}
+
+
+#: depth of render_scale_block: its own render must not refresh again
+_drawing_scale = 0
+
+
+def refresh_scale_blocks(dim) -> None:
+    """Redraw the blocks of every non-default scale of an annotative
+    dimension from the dimension as it is now. Called after anything
+    redraws or moves it (grips, STRETCH, MOVE, a style change...): AutoCAD
+    keeps every scale's drawing in step with the dimension, and the extra
+    blocks were left behind -- the 2:1 viewport showed the old dimension."""
+    if _drawing_scale or dim.dxftype() != "DIMENSION" or dim.doc is None \
+            or not is_annotative(dim):
+        return
+    for rep in [r for r in representations(dim) if not r.is_default]:
+        old_block = rep.first(2)
+        if remove_representation(dim, rep.scale) is None:
+            continue
+        add_representation(dim, rep.scale, default=False)
+        drop_unreferenced_block(dim.doc, old_block)
+
+
+def block_referenced(doc, name: str) -> bool:
+    """Is the anonymous *D block drawn by any dimension -- as its own
+    geometry or as one of its scale representations?"""
+    for e in doc.entitydb.values():
+        if not e.is_alive:
+            continue
+        if e.dxftype() in ("DIMENSION", "ARC_DIMENSION") \
+                and e.dxf.get("geometry", None) == name:
+            return True
+        if e.dxftype().endswith("DIMOBJECTCONTEXTDATA_CLASS"):
+            for sub in _subclass_tags(e):
+                if any(c == 2 and v == name for c, v in sub):
+                    return True
+    return False
+
+
+def drop_unreferenced_block(doc, name) -> None:
+    if name and name in doc.blocks and not block_referenced(doc, name):
+        try:
+            doc.blocks.delete_block(name, safe=False)
+        except Exception:                        # noqa: BLE001
+            pass
+
+
 def supports_representation(entity) -> bool:
     """Can :func:`add_representation` write a body for this entity?"""
     dxftype = entity.dxftype()
@@ -483,6 +572,11 @@ def add_representation(entity, scale: Scale, *, default: bool,
     name, cpp = CONTEXT_CLASSES[dxftype]
     doc = entity.doc
     _register_class(doc, name, cpp)
+    if dxftype == "DIMENSION" and not default and layout is None:
+        # another scale draws its own block (AutoCAD: a 4-scale dimension
+        # owns 4 *D blocks) -- pointing at the default one drew it at the
+        # default's size in every viewport
+        layout = render_scale_block(entity, scale)
     body = _body_for(entity)
     if layout:
         body = [(c, repr(layout[c]) if isinstance(layout[c], float)

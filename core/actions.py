@@ -1572,12 +1572,11 @@ _DIM_TYPES = ("DIMENSION", "ARC_DIMENSION")
 
 
 def _dim_block_shared(document, name: str) -> bool:
-    """Is the anonymous *D block still referenced by any dimension?"""
-    for e in document.doc.entitydb.values():
-        if e.is_alive and e.dxftype() in ("DIMENSION", "ARC_DIMENSION") \
-                and e.dxf.get("geometry", None) == name:
-            return True
-    return False
+    """Is the anonymous *D block still referenced by any dimension -- as its
+    geometry or as the drawing of one of its annotation scales?"""
+    from core.annotative import block_referenced
+
+    return block_referenced(document.doc, name)
 
 
 def _stamp_dim_block_byblock(document, dim) -> None:

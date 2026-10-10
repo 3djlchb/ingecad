@@ -27,6 +27,7 @@ def apply() -> None:
     _patch_mtext_mask_rendering()
     _patch_bold_italic_font_matching()
     _patch_metric_compatible_fonts()
+    _patch_annotative_dimension_scales()
     _patch_lwpolyline_get_points()
     _patch_radial_dimension_layout()
     _patch_linear_dimension_direction()
@@ -259,6 +260,43 @@ METRIC_COMPATIBLE_SCALE = {
 
 
 _ASKED_BY_TWIN = {twin.lower(): asked for asked, twin in METRIC_COMPATIBLE_FILES.items()}
+
+
+def _patch_annotative_dimension_scales() -> None:
+    """Every redraw or move of a dimension redraws its other scales too.
+
+    An annotative dimension carries one *D block per annotation scale. ezdxf
+    redraws (``DimStyleOverride.render``) and moves (``Dimension.transform``)
+    only the dimension's own, so after a grip edit, STRETCH, MOVE or a style
+    change the other scales showed the dimension as it had been. Hooked here,
+    once, rather than at the dozen places that redraw a dimension.
+    """
+    from ezdxf.entities.dimension import Dimension
+    from ezdxf.entities.dimstyleoverride import DimStyleOverride
+
+    if getattr(DimStyleOverride.render, "_ingecad_patch", False):
+        return
+    original_render = DimStyleOverride.render
+    original_transform = Dimension.transform
+
+    def render(self, *args, **kwargs):
+        result = original_render(self, *args, **kwargs)
+        from core.annotative import refresh_scale_blocks
+
+        refresh_scale_blocks(self.dimension)
+        return result
+
+    def transform(self, m):
+        result = original_transform(self, m)
+        from core.annotative import refresh_scale_blocks
+
+        refresh_scale_blocks(self)
+        return result
+
+    render._ingecad_patch = True
+    transform._ingecad_patch = True
+    DimStyleOverride.render = render
+    Dimension.transform = transform
 
 
 def add_metric_compatible_synonyms(manager) -> None:
