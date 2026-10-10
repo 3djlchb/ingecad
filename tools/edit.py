@@ -784,8 +784,20 @@ class _TrimExtendBase(Tool):
                 return
             self._replace("EXTEND", entity,
                           [lambda msp, c=new_pts: msp.add_lwpolyline(c)])
+        elif t == "ARC":
+            cx, cy, radius, start, end = ocs.arc_wcs(entity)
+            center = (cx, cy)
+            pick_ang = math.atan2(point[1] - cy, point[0] - cx)
+            arc = editmath.extend_arc(center, radius, start, end, pick_ang,
+                                      segs, circles)
+            if arc is None:
+                self.ctx.echo(tr("No boundary edge to extend to."))
+                return
+            self._replace("EXTEND", entity,
+                          [lambda msp, c=center, r=radius, a=arc:
+                               msp.add_arc(c, r, a[0], a[1])])
         else:
-            self.ctx.echo(tr("EXTEND supports LINE and PLINE for now."))
+            self.ctx.echo(tr("EXTEND supports LINE, ARC and PLINE for now."))
 
 
 class TrimTool(_TrimExtendBase):

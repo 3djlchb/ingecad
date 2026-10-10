@@ -350,6 +350,35 @@ def extend_segment(seg: Seg, edges: list[Seg],
     return (x1, y1, px, py) if forward else (px, py, x2, y2)
 
 
+def extend_arc(center: Point, r: float, a_start: float, a_end: float,
+               pick_angle: float, edges: list[Seg],
+               circles: list) -> Optional[tuple[float, float]]:
+    """Extend the end of an ARC (degrees) nearest the pick along its own
+    circle to the first boundary crossing; the new (start, end) in degrees,
+    or None. The circle meeting a boundary only by touching it counts --
+    the tangency tolerance of ``line_circle_intersections`` (issue #14)."""
+    s = math.radians(a_start) % math.tau
+    e = math.radians(a_end) % math.tau
+    sweep = (e - s) % math.tau or math.tau
+    if sweep >= math.tau - EPS:
+        return None                          # a full circle has no end
+    rel = (pick_angle - s) % math.tau
+    if rel <= sweep:
+        forward = rel > sweep / 2.0          # the end nearest along the arc
+    else:                                    # picked off the arc: nearest end
+        forward = (rel - sweep) < (math.tau - rel)
+    crossings = []
+    for ang in _circle_crossing_angles(center, r, edges, circles):
+        rel_c = (ang - s) % math.tau
+        if sweep + EPS < rel_c < math.tau - EPS:
+            crossings.append(rel_c)
+    if not crossings:
+        return None
+    if forward:
+        return (math.degrees(s), math.degrees(s + min(crossings)))
+    return (math.degrees(s - (math.tau - max(crossings))), math.degrees(s + sweep))
+
+
 def extend_polyline(points: list[Point], closed: bool, pick_point: Point,
                     edges: list[Seg],
                     circles: list[tuple[Point, float]]):

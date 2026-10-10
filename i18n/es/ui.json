@@ -639,7 +639,6 @@
   "Drawing orientation": "Orientación del dibujo",
   "Drawing unit": "Unidad del dibujo",
   "Drawings (*.dwg *.dxf);;All files (*)": "Dibujos (*.dwg *.dxf);;Todos los archivos (*)",
-  "EXTEND supports LINE and PLINE for now.": "EXTEND soporta LINE y PLINE por ahora.",
   "East": "Este",
   "East   3 o'clock =   0": "Este    3 en punto =   0",
   "Edit": "Edición",
@@ -1977,5 +1976,6 @@
   "Mark": "Marca",
   "Selection filter: nothing can be selected.": "Filtro de selección: no se puede seleccionar nada.",
   "Selection filter by object type: nothing": "Filtro de selección por tipo de objeto: ninguno",
-  "Enter command name to repeat:": "Indique el nombre del comando que desea repetir:"
+  "Enter command name to repeat:": "Indique el nombre del comando que desea repetir:",
+  "EXTEND supports LINE, ARC and PLINE for now.": "ALARGA admite por ahora LÍNEA, ARCO y POLILÍNEA."
 }
