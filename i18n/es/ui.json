@@ -1362,10 +1362,8 @@
   "Select image(s):": "Designe la(s) imagen(es):",
   "Select object to dimension:": "Seleccione el objeto a acotar:",
   "Select object to divide:": "Seleccione el objeto a dividir:",
-  "Select object to extend (Shift trims):": "Seleccione el objeto a extender (Shift recorta):",
   "Select object to measure:": "Seleccione el objeto a graduar:",
   "Select object to offset or [Exit/Undo] <Exit>:": "Designe el objeto a desfasar o [salIr(E)/desHacer(U)] <salIr>:",
-  "Select object to trim (Shift extends):": "Seleccione el objeto a recortar (Shift extiende):",
   "Select object:": "Seleccione un objeto:",
   "Select objects (Enter when done):": "Seleccione objetos (Enter para terminar):",
   "Select objects on the layer(s) to be isolated:": "Designe objetos de la(s) capa(s) que se van a aislar:",
@@ -1977,5 +1975,14 @@
   "Selection filter: nothing can be selected.": "Filtro de selección: no se puede seleccionar nada.",
   "Selection filter by object type: nothing": "Filtro de selección por tipo de objeto: ninguno",
   "Enter command name to repeat:": "Indique el nombre del comando que desea repetir:",
-  "EXTEND supports LINE, ARC and PLINE for now.": "ALARGA admite por ahora LÍNEA, ARCO y POLILÍNEA."
+  "EXTEND supports LINE, ARC and PLINE for now.": "ALARGA admite por ahora LÍNEA, ARCO y POLILÍNEA.",
+  "Current settings: Projection=UCS, Edge=None, Mode={mode}": "Parámetros actuales: Proyección=SCP, Arista=Ninguna, Modo={mode}",
+  "Trim mode|Quick": "Rápido",
+  "Trim mode|Standard": "Estándar",
+  "Select object to trim or shift-select to extend or [mOde]:": "Designe objeto que recortar o pulse Mayús y designe para alargar o [mOdo(O)]:",
+  "Select object to trim or shift-select to extend or [cuTting edges/mOde]:": "Designe objeto que recortar o pulse Mayús y designe para alargar o [aristas de corTe(T)/mOdo(O)]:",
+  "Select object to extend or shift-select to trim or [mOde]:": "Designe objeto que alargar o pulse Mayús y designe para recortar o [mOdo(O)]:",
+  "Select object to extend or shift-select to trim or [Boundary edges/mOde]:": "Designe objeto que alargar o pulse Mayús y designe para recortar o [aristas de Borde(B)/mOdo(O)]:",
+  "Enter a trim mode option [Quick/Standard] <{mode}>:": "Indique una opción de modo de recorte [Rápido(Q)/Estándar(S)] <{mode}>:",
+  "Enter an extend mode option [Quick/Standard] <{mode}>:": "Indique una opción de modo de alargamiento [Rápido(Q)/Estándar(S)] <{mode}>:"
 }

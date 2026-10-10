@@ -617,6 +617,15 @@ def _number(text: str):
         return None
 
 
+def _mode_word(quick: bool) -> str:
+    """TRIMEXTENDMODE's two words, in their own context: "Standard" alone
+    is also the name of a style, which is never translated."""
+    from core.i18n import tr_context
+
+    return tr_context("Trim mode|Quick") if quick \
+        else tr_context("Trim mode|Standard")
+
+
 class _TrimExtendBase(Tool):
     wants_selection = True   # the cutting/boundary edges
     entity_picker = True
@@ -624,7 +633,17 @@ class _TrimExtendBase(Tool):
     trim_mode = True
 
     def start(self) -> None:
+        from core import trimmode
+
         self._edges_handles: list[str] | None = None
+        self._asking_mode = False
+        self.quick = trimmode.trimextendmode() == 1
+        self.ctx.echo(tr("Current settings: Projection=UCS, Edge=None, "
+                         "Mode={mode}", mode=_mode_word(self.quick)))
+        # Quick: every object is an edge, nothing to pick first
+        self.wants_selection = not self.quick
+        if self.quick:
+            self._object_prompt()
 
     def selection_prompt(self) -> str:
         return (tr("Select cutting edges <Enter selects all>:") if self.trim_mode
@@ -633,8 +652,51 @@ class _TrimExtendBase(Tool):
     def on_selection(self, entities: list) -> None:
         # Enter with empty selection = all entities are edges (modern AutoCAD)
         self._edges_handles = [e.dxf.handle for e in entities] or None
-        self.prompt("Select object to trim (Shift extends):" if self.trim_mode
-                    else "Select object to extend (Shift trims):")
+        self._object_prompt()
+
+    def _object_prompt(self) -> None:
+        """AutoCAD 2021's object prompt, per command and mode."""
+        if self.trim_mode:
+            self.prompt(
+                "Select object to trim or shift-select to extend or "
+                "[cuTting edges/mOde]:" if self.quick else
+                "Select object to trim or shift-select to extend or [mOde]:")
+        else:
+            self.prompt(
+                "Select object to extend or shift-select to trim or "
+                "[Boundary edges/mOde]:" if self.quick else
+                "Select object to extend or shift-select to trim or [mOde]:")
+
+    def on_option(self, text: str) -> bool:
+        from core import trimmode
+
+        if self._asking_mode:
+            key = self.option(text) if text.strip() else \
+                ("Q" if self.quick else "S")
+            if key not in ("Q", "S"):
+                return False
+            self._asking_mode = False
+            trimmode.set_trimextendmode(1 if key == "Q" else 0)
+            self.quick = key == "Q"
+            if self.quick:
+                self._edges_handles = None        # every object, as Quick is
+                self._object_prompt()
+            else:
+                self.ctx.services.request_selection()
+            return True
+        key = self.option(text)
+        if key == "O":
+            self._asking_mode = True
+            source = ("Enter a trim mode option [Quick/Standard] <{mode}>:"
+                      if self.trim_mode else
+                      "Enter an extend mode option [Quick/Standard] <{mode}>:")
+            self.prompt(source, mode=_mode_word(self.quick))
+            return True
+        if self.quick and key in ("T", "B"):
+            # cuTting edges / Boundary edges: pick them, then trim as Standard
+            self.ctx.services.request_selection()
+            return True
+        return False
 
     def on_point(self, point: Point) -> None:
         entity = self.ctx.services.pick_entity(point)
@@ -701,7 +763,7 @@ class _TrimExtendBase(Tool):
             pick_t = _param_on_segment(seg, point)
             pieces = editmath.trim_segment(seg, segs, circles, pick_t)
             if pieces is None:
-                self.ctx.echo(tr("No cutting edge crosses it."))
+                self._nothing_crosses(entity)
                 return
             factories = [
                 (lambda msp, p=p: msp.add_line((p[0], p[1]), (p[2], p[3])))
@@ -715,7 +777,11 @@ class _TrimExtendBase(Tool):
             arc = editmath.trim_circle(center, radius, segs, pick_ang,
                                        cutter_circles=circles)
             if arc is None:
-                self.ctx.echo(tr("A circle needs two crossings to trim."))
+                if self.quick and not editmath.circle_crossings(
+                        center, radius, segs, circles):
+                    self._nothing_crosses(entity)
+                else:
+                    self.ctx.echo(tr("A circle needs two crossings to trim."))
                 return
             a0, a1 = arc
             self._replace("TRIM", entity,
@@ -729,7 +795,7 @@ class _TrimExtendBase(Tool):
                 center, radius, start, end, segs, pick_ang,
                 cutter_circles=circles)
             if spans is None:
-                self.ctx.echo(tr("No cutting edge crosses it."))
+                self._nothing_crosses(entity)
                 return
             factories = [
                 (lambda msp, c=center, r=radius, s=s0, e=e0:
@@ -746,7 +812,7 @@ class _TrimExtendBase(Tool):
                 [(p[0], p[1]) for p in pts], entity.closed, point,
                 segs, circles)
             if chains is None:
-                self.ctx.echo(tr("No cutting edge crosses it."))
+                self._nothing_crosses(entity)
                 return
             factories = [
                 (lambda msp, c=chain: msp.add_lwpolyline(c))
@@ -755,6 +821,15 @@ class _TrimExtendBase(Tool):
             self._replace("TRIM", entity, factories)
         else:
             self.ctx.echo(tr("TRIM supports LINE, PLINE, CIRCLE and ARC for now."))
+
+    def _nothing_crosses(self, entity) -> None:
+        """No cutting edge crosses the picked object. Standard says so;
+        Quick erases it, as AutoCAD 2021's Quick TRIM does with an object
+        that has no intersections (Rafael erased such stubs by hand)."""
+        if getattr(self, "quick", False):
+            self.ctx.execute(actions.EraseCommand([entity]))
+            return
+        self.ctx.echo(tr("No cutting edge crosses it."))
 
     def _extend(self, entity, point, segs, circles) -> None:
         t = entity.dxftype()

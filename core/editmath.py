@@ -193,6 +193,12 @@ def _circle_crossing_angles(center: Point, r: float, cutters: list[Seg],
     return angles
 
 
+def circle_crossings(center: Point, r: float, cutters: list[Seg],
+                     cutter_circles) -> list[float]:
+    """Angles where the circle meets the cutters (segments and circles)."""
+    return _circle_crossing_angles(center, r, cutters, cutter_circles or [])
+
+
 def trim_circle(center: Point, r: float, cutters: list[Seg],
                 pick_angle: float,
                 cutter_circles: Optional[list[tuple[Point, float]]] = None,
