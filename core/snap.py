@@ -87,6 +87,10 @@ class SnapEngine:
         self.document = document
         self._space = space
         self._dirty = True
+        #: block definitions being walked, to stop a cyclic one
+        self._block_stack: set = set()
+        #: transformed block rows collected by a build (see _emit)
+        self._chunks = None
         self._owners: list[str] = []
         self._owner_ids: dict[str, int] = {}
         self._segs = np.empty((0, 4))     # x1 y1 x2 y2
@@ -177,7 +181,7 @@ class SnapEngine:
                 l = e.dxf.location
                 points.append((l.x, l.y))
                 point_o.append(oid)
-            elif t in ("INSERT", "TEXT", "MTEXT", "ATTDEF", "SHAPE") \
+            elif t in ("INSERT", "TEXT", "MTEXT", "ATTDEF", "ATTRIB", "SHAPE") \
                     and targets is not None:
                 # INSertion: the point the object hangs from.
                 anchor = e.dxf.get("insert")
@@ -424,7 +428,178 @@ class SnapEngine:
                           curves, curve_o, targets, target_o)
         return found
 
+    # -- what an ordinary block insert draws -----------------------------------
+    #: nesting deeper than this is not followed (and stops a cyclic definition)
+    _BLOCK_DEPTH = 8
+
+    def _block_local(self, block, depth: int = 0):
+        """A block definition's snap geometry in its own coordinates, as
+        arrays, extracted once per build and reused by every insert of it.
+        A drawing with a thousand inserts of one block pays one walk."""
+        cache = self._blocks()
+        name = block.name
+        local = cache.get(name)
+        if local is not None:
+            return local
+        if name in self._block_stack:            # a cyclic definition
+            return None
+        self._block_stack.add(name)
+        chunks, self._chunks = self._chunks, None    # into these lists
+        lists = [[] for _ in range(12)]
+        segs, seg_o, circles, circle_o, arcs, arc_o, points, point_o, \
+            curves, curve_o, targets, target_o = lists
+        for part in block:
+            kind = part.dxftype()
+            if kind == "ATTDEF":
+                continue          # a definition: the insert shows its ATTRIB
+            if kind == "INSERT":
+                self._insert_children(part, 0, *lists, depth=depth + 1)
+            self._extract(part, 0, segs, seg_o, circles, circle_o,
+                          arcs, arc_o, points, point_o,
+                          curves, curve_o, targets, target_o)
+        local = (np.asarray(segs, dtype=np.float64).reshape(-1, 4),
+                 np.asarray(circles, dtype=np.float64).reshape(-1, 3),
+                 np.asarray(arcs, dtype=np.float64).reshape(-1, 5),
+                 np.asarray(points, dtype=np.float64).reshape(-1, 2),
+                 np.asarray(curves, dtype=np.float64).reshape(-1, 4),
+                 np.asarray(targets, dtype=np.float64).reshape(-1, 3))
+        self._chunks = chunks
+        self._block_stack.discard(name)
+        cache[name] = local
+        return local
+
+    def _blocks(self) -> dict:
+        """The document's block geometry cache, for its current block
+        definitions. Shared by every engine of the document (model, sheets,
+        the background warmer) and kept across rebuilds: Plaza Yanque's
+        drawings-as-blocks cost 0.3 s to walk, and an edit that rebuilds
+        the index must not pay that again. ``blocks_revision`` (bumped by
+        History for anything that changes a definition) retires it."""
+        document = self.document
+        revision = getattr(document, "blocks_revision", 0)
+        shared = getattr(document, "_snap_block_cache", None)
+        if shared is None or shared[0] != revision:
+            shared = (revision, {})
+            try:
+                document._snap_block_cache = shared
+            except Exception:
+                pass
+        return shared[1]
+
+    def _insert_children(self, e, oid, segs, seg_o, circles, circle_o,
+                         arcs, arc_o, points, point_o, curves, curve_o,
+                         targets, target_o, depth: int = 0) -> None:
+        """What a block insert draws snaps, as in AutoCAD: a door's jamb,
+        a column's corner, a title block's frame -- every hit belongs to
+        the INSERT, the object the drawing can select. Only the insertion
+        point snapped before (GeoCad Yaguarete had to patch it in). An
+        external reference goes through ``_xref_children``."""
+        if depth > self._BLOCK_DEPTH:
+            return
+        lists = (segs, seg_o, circles, circle_o, arcs, arc_o, points,
+                 point_o, curves, curve_o, targets, target_o)
+        try:
+            if self._xref_children(e, oid, *lists):
+                return
+            for attrib in e.attribs:
+                if not attrib.is_invisible:
+                    self._extract(attrib, oid, *lists)
+            if e.mcount > 1:                       # MINSERT: each copy
+                for copy in e.multi_insert():
+                    self._one_insert(copy, oid, lists, depth)
+                return
+            self._one_insert(e, oid, lists, depth)
+        except Exception:
+            pass                  # a broken insert: its own point still snaps
+
+    def _one_insert(self, e, oid, lists, depth: int) -> None:
+        block = e.block()
+        if block is None or block.block.dxf.flags & 4:     # xref, unresolved
+            return
+        sx = float(e.dxf.get("xscale", 1.0))
+        sy = float(e.dxf.get("yscale", 1.0))
+        extrusion = e.dxf.get("extrusion", (0.0, 0.0, 1.0))
+        planar = abs(extrusion[0]) < 1e-12 and abs(extrusion[1]) < 1e-12 \
+            and extrusion[2] > 0
+        if not planar or abs(abs(sx) - abs(sy)) > 1e-9 * max(abs(sx), 1.0):
+            # Stretched or tilted: circles are no longer circles. Walk the
+            # insert's own transformed copies.
+            for child in e.virtual_entities():
+                if child.dxftype() == "INSERT":
+                    self._insert_children(child, oid, *lists, depth=depth + 1)
+                self._extract(child, oid, *lists)
+            return
+        local = self._block_local(block, depth)
+        if local is None:
+            return
+        segs, seg_o, circles, circle_o, arcs, arc_o, points, point_o, \
+            curves, curve_o, targets, target_o = lists
+        l_segs, l_circles, l_arcs, l_points, l_curves, l_targets = local
+        rot = math.radians(float(e.dxf.get("rotation", 0.0)))
+        cos_r, sin_r = math.cos(rot), math.sin(rot)
+        a = np.array([[cos_r * sx, -sin_r * sy],
+                      [sin_r * sx, cos_r * sy]])
+        base = block.block.dxf.get("base_point", (0.0, 0.0, 0.0))
+        ins = e.dxf.insert
+        shift = np.array([ins.x, ins.y]) - a @ np.array([base[0], base[1]])
+
+        def xy(arr):
+            return arr @ a.T + shift
+
+        if len(l_segs):
+            moved = np.hstack((xy(l_segs[:, :2]), xy(l_segs[:, 2:])))
+            self._emit("segs", moved, oid, segs, seg_o)
+        if len(l_curves):
+            moved = np.hstack((xy(l_curves[:, :2]), xy(l_curves[:, 2:])))
+            self._emit("curves", moved, oid, curves, curve_o)
+        if len(l_points):
+            self._emit("points", xy(l_points), oid, points, point_o)
+        if len(l_targets):
+            moved = np.column_stack((xy(l_targets[:, :2]), l_targets[:, 2]))
+            self._emit("targets", moved, oid, targets, target_o)
+        scale = abs(sx)
+        if len(l_circles):
+            moved = np.column_stack((xy(l_circles[:, :2]),
+                                     l_circles[:, 2] * scale))
+            self._emit("circles", moved, oid, circles, circle_o)
+        if len(l_arcs):
+            centres = xy(l_arcs[:, :2])
+            sweep = l_arcs[:, 4] - l_arcs[:, 3]
+            mirrored = sx * sy < 0
+            # a mirror runs the arc the other way: its new start is the
+            # image of its old end
+            start = l_arcs[:, 4] if mirrored else l_arcs[:, 3]
+            direction = np.column_stack((np.cos(start), np.sin(start))) @ a.T
+            a0 = np.mod(np.arctan2(direction[:, 1], direction[:, 0]), math.tau)
+            moved = np.column_stack((centres, l_arcs[:, 2] * scale,
+                                     a0, a0 + sweep))
+            self._emit("arcs", moved, oid, arcs, arc_o)
+
+    _CHUNK_KEYS = ("segs", "circles", "arcs", "points", "curves", "targets")
+
+    def _emit(self, key, rows, oid, values, owners) -> None:
+        """A transformed block's rows: kept as one array while a build
+        collects (no per-row Python lists for 170 000 segments), else
+        appended to the lists."""
+        if self._chunks is not None:
+            self._chunks[key].append((rows, oid))
+            return
+        values.extend(rows.tolist())
+        owners.extend([oid] * len(rows))
+
+    def _merged(self, key, values, owners, width):
+        rows = np.asarray(values, dtype=np.float64).reshape(-1, width)
+        oidx = np.asarray(owners, dtype=np.int32)
+        chunks = self._chunks[key] if self._chunks is not None else []
+        if chunks:
+            rows = np.vstack([rows] + [c for c, _ in chunks])
+            oidx = np.concatenate(
+                [oidx] + [np.full(len(c), o, dtype=np.int32)
+                          for c, o in chunks])
+        return rows, oidx
+
     def _build(self) -> None:
+        self._chunks = {key: [] for key in self._CHUNK_KEYS}
         self._owners = []
         self._owner_ids = {}
         segs: list = []
@@ -447,28 +622,27 @@ class SnapEngine:
             except Exception:
                 continue
             if e.dxftype() == "INSERT":
-                # an external reference: its geometry snaps as one object
-                # (and the INSERT's own insertion point below, as ever)
-                self._xref_children(e, oid, segs, seg_o, circles, circle_o,
-                                    arcs, arc_o, points, point_o,
-                                    curves, curve_o, targets, target_o)
+                # what the block or external reference draws snaps as one
+                # object (and the INSERT's own insertion point below)
+                self._insert_children(e, oid, segs, seg_o, circles, circle_o,
+                                      arcs, arc_o, points, point_o,
+                                      curves, curve_o, targets, target_o)
             self._extract(e, oid, segs, seg_o, circles, circle_o,
                           arcs, arc_o, points, point_o,
                           curves, curve_o, targets, target_o)
-        self._segs = np.asarray(segs, dtype=np.float64).reshape(-1, 4)
-        self._seg_oidx = np.asarray(seg_o, dtype=np.int32)
+        self._segs, self._seg_oidx = self._merged("segs", segs, seg_o, 4)
         self._seg_bounds = self._seg_bounds_of(self._segs)
-        self._circles = np.asarray(circles, dtype=np.float64).reshape(-1, 3)
-        self._circle_oidx = np.asarray(circle_o, dtype=np.int32)
-        self._arcs = np.asarray(arcs, dtype=np.float64).reshape(-1, 5)
-        self._arc_oidx = np.asarray(arc_o, dtype=np.int32)
-        self._points = np.asarray(points, dtype=np.float64).reshape(-1, 2)
-        self._point_oidx = np.asarray(point_o, dtype=np.int32)
-        self._curves = np.asarray(curves, dtype=np.float64).reshape(-1, 4)
-        self._curve_oidx = np.asarray(curve_o, dtype=np.int32)
+        self._circles, self._circle_oidx = self._merged(
+            "circles", circles, circle_o, 3)
+        self._arcs, self._arc_oidx = self._merged("arcs", arcs, arc_o, 5)
+        self._points, self._point_oidx = self._merged(
+            "points", points, point_o, 2)
+        self._curves, self._curve_oidx = self._merged(
+            "curves", curves, curve_o, 4)
         self._curve_bounds = self._seg_bounds_of(self._curves)
-        self._targets = np.asarray(targets, dtype=np.float64).reshape(-1, 3)
-        self._target_oidx = np.asarray(target_o, dtype=np.int32)
+        self._targets, self._target_oidx = self._merged(
+            "targets", targets, target_o, 3)
+        self._chunks = None
         self._dirty = False
 
     def add_entities(self, entities) -> None:
@@ -498,6 +672,10 @@ class SnapEngine:
                 oid = self._intern(e.dxf.handle)
             except Exception:
                 continue
+            if e.dxftype() == "INSERT":
+                self._insert_children(e, oid, segs, seg_o, circles, circle_o,
+                                      arcs, arc_o, points, point_o,
+                                      curves, curve_o, targets, target_o)
             self._extract(e, oid, segs, seg_o, circles, circle_o,
                           arcs, arc_o, points, point_o,
                           curves, curve_o, targets, target_o)

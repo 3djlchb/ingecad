@@ -396,6 +396,7 @@ class PurgeCommand(Command):
     """
 
     name = "PURGE"
+    touches_blocks = True
     needs_regen = True
 
     def __init__(self, items: dict[str, list]) -> None:

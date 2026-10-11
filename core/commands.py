@@ -112,8 +112,32 @@ class History:
         command.dimassoc_followup = dimassoc.react(self.document, state)
         if command.dimassoc_followup is not None:
             command.dimassoc_followup.do(self.document)
+        self.record(command)
+
+    def record(self, command: Command) -> None:
+        """Put an already-applied command on the undo stack (execute's last
+        step; grips and in-place edits, which mutate first, call it alone)."""
         self._undo.append(command)
         self._redo.clear()
+        self._mark_blocks(command, applied=True)
+
+    def _mark_blocks(self, command: Command, applied: bool = False) -> None:
+        """Tell the document a block definition changed: anything done in
+        the Block Editor, or by a command that says it redefines blocks.
+        What caches a definition's geometry (the snap engine) keys on
+        ``blocks_revision``. Decided when the command is applied and kept
+        on it, so its undo after BCLOSE still counts."""
+        document = self.document
+        if document is None:
+            return
+        if applied:
+            command._touched_blocks = bool(
+                getattr(command, "touches_blocks", False)
+                or getattr(document, "edit_block", None) is not None
+                or any(getattr(c, "_touched_blocks", False)
+                       for c in getattr(command, "commands", ())))
+        if getattr(command, "_touched_blocks", False):
+            document.blocks_revision = getattr(document, "blocks_revision", 0) + 1
 
     @property
     def can_undo(self) -> bool:
@@ -133,6 +157,7 @@ class History:
             followup.undo(self.document)
         command.undo(self.document)
         self._redo.append(command)
+        self._mark_blocks(command)
         return command
 
     def redo(self) -> Command | None:
@@ -145,6 +170,7 @@ class History:
         if followup is not None:
             followup.do(self.document)
         self._undo.append(command)
+        self._mark_blocks(command)
         return command
 
     def clear(self) -> None:

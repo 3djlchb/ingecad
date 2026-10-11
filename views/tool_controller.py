@@ -1135,8 +1135,7 @@ class ToolController(QObject):
         snap.name = "HATCHEDIT"
         actions.apply_hatch_settings(entity, after)
         snap.commit(document)
-        self.window.history._undo.append(snap)
-        self.window.history._redo.clear()
+        self.window.history.record(snap)
         # its look changed, its geometry did not: redraw that one entity
         # instead of the drawing (the same path a layer's colour takes)
         self.redraw_entities([entity])
@@ -3577,8 +3576,7 @@ class ToolController(QObject):
         if entity is not None:
             apply_grip_edit(entity, index, role, (wx, wy))
             snap.commit(self.window.document)
-            self.window.history._undo.append(snap)
-            self.window.history._redo.clear()
+            self.window.history.record(snap)
             # grips/snap see the new shape; both caches are patched, not
             # rebuilt (a full rebuild froze the next pick on big files)
             self._drop_conflicting_stamps([handle])

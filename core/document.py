@@ -65,6 +65,8 @@ class Document:
         # dirty=True). Lets a background regen detect that the document
         # changed under it and that its result is stale.
         self.revision = 0
+        #: bumped when a block definition changes (see History._mark_blocks)
+        self.blocks_revision = 0
         #: The last PLOT dialog settings per layout name, for the session:
         #: the dialog reopens as it was left, the way AutoCAD's does.
         self.plot_settings: dict[str, dict] = {}

@@ -1021,6 +1021,7 @@ class CreateBlockCommand(Command):
     """
 
     name = "BLOCK"
+    touches_blocks = True
 
     def __init__(self, block_name: str, base_point, entities) -> None:
         self.block_name = block_name
@@ -1071,6 +1072,7 @@ class DefineBlockFromFileCommand(Command):
     rule for inserting a drawing)."""
 
     name = "INSERT"
+    touches_blocks = True
 
     def __init__(self, block_name: str, source_document) -> None:
         self.block_name = block_name
@@ -1108,6 +1110,7 @@ class RedefineBlockFromFileCommand(Command):
     """
 
     name = "INSERT"
+    touches_blocks = True
     needs_regen = True                  # every reference changes at once
 
     def __init__(self, block_name: str, source_document) -> None:
@@ -2434,8 +2437,7 @@ def apply_in_place(history, entities, mutate) -> None:
     snap = SnapshotCommand(entities)
     mutate()
     snap.commit(history.document)
-    history._undo.append(snap)
-    history._redo.clear()
+    history.record(snap)
 
 
 class SetPropertyCommand(Command):
