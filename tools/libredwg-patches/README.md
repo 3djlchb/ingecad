@@ -24,8 +24,8 @@ every width; on two corpus plans ODA's polylines with widths (2 and 6) are
 exactly what the new `dwg2dxf` gives (0 before). Read sweep, 197 corpus
 drawings old vs new `dwg2dxf`: same entity counts everywhere, and 962
 polylines in 44 drawings get their widths back. `make check` 286/0;
-`dwg_fuzz` 500 seeds identical, seed by seed. Upstream: not yet sent (both
-bugs are still on master as of a3d51f13).
+`dwg_fuzz` 500 seeds identical, seed by seed. Upstream: #1437 (all three
+were still on master as of a3d51f13).
 
 ## 2026-10-10: associative dimensions survive open and Save as DWG
 
