@@ -209,3 +209,41 @@ def test_a_grip_keeps_the_height_of_the_point_it_moves():
     History(document).execute(
         DimGripCommand(dim, "defpoint4", (point.x, point.y)))
     assert dim.dxf.defpoint4.z == 500
+
+
+
+
+def test_a_two_line_angular_measures_the_sector_of_its_arc_point():
+    """Two lines make four angles; ezdxf went counter-clockwise from the
+    first ray to the second whatever the arc point said (27 read 333)."""
+    import math
+
+    document = Document.new()
+    doc = document.doc
+    msp = doc.modelspace()
+    a = math.radians(27)
+    b = math.radians(9)
+    dim = msp.new_entity("DIMENSION", {
+        "dimtype": 34, "dimstyle": "Standard",
+        "defpoint2": (0, 0), "defpoint3": (10, 0), "defpoint4": (0, 0),
+        "defpoint": (10 * math.cos(a), 10 * math.sin(a)),
+        "defpoint5": (5 * math.cos(b), 5 * math.sin(b)),
+        "text_midpoint": (5, 1)})
+    doc.dimstyles.get("Standard").dxf.dimadec = 0
+    dim.render()
+    assert _texts(doc, dim) == ["27°"]
+
+
+@pytest.mark.skipif(find_dxf2dwg() is None, reason="LibreDWG not available")
+def test_two_line_angular_points_of_an_oda_dwg():
+    """LibreDWG swapped DXF 10 and 16 of a 2-line angular, reading and
+    writing alike -- so its own round trip agreed with itself and only a
+    DWG from another writer shows it. tests/data/angular_2l_oda.dwg is
+    ODA File Converter's DWG of a synthetic drawing: line 1 along X, line 2
+    to (8, 6), the arc through (6, 2)."""
+    from pathlib import Path
+
+    path = Path(__file__).parent / "data" / "angular_2l_oda.dwg"
+    dim = load_dwg(path).modelspace().query("DIMENSION")[0]
+    assert tuple(round(v, 6) for v in dim.dxf.defpoint)[:2] == (8.0, 6.0)
+    assert tuple(round(v, 6) for v in dim.dxf.defpoint5)[:2] == (6.0, 2.0)

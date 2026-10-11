@@ -3,6 +3,27 @@
 IngeCAD embeds LibreDWG's `dwg2dxf`/`dxf2dwg` as satellite converters
 (`vendor/libredwg/bin`, gitignored).
 
+## 2026-10-11: 2-line angular dimensions keep their points
+
+Appended to `current/ingecad-vendor-0.14.8597.patch`. Found by re-rendering
+every dimension of the corpus in place: 2-line angular dimensions read
+nonsense (521 of 646 differed from the author's block).
+
+- **`dwg.spec` read the points in the wrong order.** In the DWG stream the
+  arc point (DXF 16) comes first, as a 2RD, and the second line's end (DXF
+  10) last, as a 3BD (ODA spec); the spec read the 2RD into `def_pt` and
+  the last 3BD into `xline2end_pt`, swapping 10 and 16 both ways. The
+  pre-R13 branch above already treats `xline2end_pt` as the arc point.
+  DXF and JSON output keep their order.
+
+ODA as the judge: 123 of 123 such dimensions in 40 corpus drawings now
+have ODA's points (0 before), and a DWG written by `dxf2dwg` reads back in
+ODA with its points (swapped before). With IngeCAD's sector fix in
+`core/ezdxf_patches.py`, 132 of 138 redraw to the author's own text (0
+before; the rest are a `\M+` degree sign and one extra text). `make check`
+286/0; `dwg_fuzz` 500 seeds identical; 150 corpus drawings read with the
+same entity counts.
+
 ## 2026-10-11: polyline widths survive both ways
 
 Appended to `current/ingecad-vendor-0.14.8597.patch`. Found by a GUI sweep:

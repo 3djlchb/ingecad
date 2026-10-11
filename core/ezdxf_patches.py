@@ -39,6 +39,7 @@ def apply() -> None:
     _patch_dimension_number_format()
     _patch_underscored_arrow_names()
     _patch_suppressed_dimension_line_arrows()
+    _patch_two_line_angular_sector()
     _patch_dms_angular_text()
 
 
@@ -267,6 +268,59 @@ def _patch_suppressed_dimension_line_arrows() -> None:
 
     __init__._ingecad_patch = True
     BaseDimensionRenderer.__init__ = __init__
+
+
+def _patch_two_line_angular_sector() -> None:
+    """A 2-line angular dimension measures the sector its arc point (16)
+    lies in, as AutoCAD does.
+
+    Two lines make four angles; ezdxf took the rays from the line ends
+    farthest from the vertex and went counter-clockwise from the first to
+    the second, whatever the arc point said: a 27 degree dimension read 333.
+    Each ray is turned so that the arc point lies between the two, and they
+    are ordered counter-clockwise across it.
+    """
+    from ezdxf.render.dim_curved import AngularDimension
+
+    if getattr(AngularDimension.get_ext1_dir, "_ingecad_patch", False):
+        return
+    original1 = AngularDimension.get_ext1_dir
+    original2 = AngularDimension.get_ext2_dir
+
+    def sector(self):
+        cached = self.__dict__.get("_ingecad_sector")
+        if cached is not None:
+            return cached
+        d1, d2 = original1(self), original2(self)
+        result = (d1, d2)
+        arc = self.dim_line_location - self.center_of_arc
+        def cross(u, v):
+            return u.x * v.y - u.y * v.x
+
+        if arc.magnitude > 1e-12:
+            arc = arc.normalize()
+            for s1 in (d1, -d1):
+                for s2 in (d2, -d2):
+                    a, b = (s1, s2) if cross(s1, s2) >= 0 else (s2, s1)
+                    # arc inside the counter-clockwise sector a -> b
+                    if cross(a, arc) >= -1e-12 and cross(arc, b) >= -1e-12:
+                        result = (a, b)
+                        break
+                else:
+                    continue
+                break
+        self.__dict__["_ingecad_sector"] = result
+        return result
+
+    def get_ext1_dir(self):
+        return sector(self)[0]
+
+    def get_ext2_dir(self):
+        return sector(self)[1]
+
+    get_ext1_dir._ingecad_patch = True
+    AngularDimension.get_ext1_dir = get_ext1_dir
+    AngularDimension.get_ext2_dir = get_ext2_dir
 
 
 def _patch_single_vertex_leader() -> None:
