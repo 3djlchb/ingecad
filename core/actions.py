@@ -933,6 +933,30 @@ class EraseCommand(Command):
         document.dirty = True
 
 
+class OopsCommand(Command):
+    """OOPS: give back what the last ERASE took, in the space it took it
+    from (OOPS, Command Reference). Undo takes them away again."""
+
+    name = "OOPS"
+
+    def __init__(self, erase: EraseCommand) -> None:
+        self._space = getattr(erase, "_space", None)
+        self.entities = [e for e in erase.entities
+                         if e.is_alive and e.dxf.owner is None]
+
+    def do(self, document) -> None:
+        space = self.space(document)
+        for e in self.entities:
+            space.add_entity(e)
+        document.dirty = True
+
+    def undo(self, document) -> None:
+        space = self.space(document)
+        for e in self.entities:
+            space.unlink_entity(e)
+        document.dirty = True
+
+
 class CopyEntitiesCommand(Command):
     """Copy entities transformed by a Matrix44; undo removes the copies."""
 
@@ -2346,7 +2370,18 @@ def move_entities(entities, dx: float, dy: float) -> TransformCommand:
     return TransformCommand("MOVE", entities, Matrix44.translate(dx, dy, 0.0))
 
 
-def rotate_entities(entities, base, angle_deg: float) -> TransformCommand:
+def _transform_or_copy(name: str, entities, matrix, copy: bool) -> Command:
+    """ROTATE and SCALE's Copy option keeps the originals and transforms a
+    copy of them (ROTATE, Command Reference)."""
+    if copy:
+        command = CopyEntitiesCommand(entities, matrix)
+        command.name = name
+        return command
+    return TransformCommand(name, entities, matrix)
+
+
+def rotate_entities(entities, base, angle_deg: float,
+                    copy: bool = False) -> Command:
     import math as _math
 
     from ezdxf.math import Matrix44
@@ -2354,16 +2389,17 @@ def rotate_entities(entities, base, angle_deg: float) -> TransformCommand:
     m = (Matrix44.translate(-base[0], -base[1], 0.0)
          @ Matrix44.z_rotate(_math.radians(angle_deg))
          @ Matrix44.translate(base[0], base[1], 0.0))
-    return TransformCommand("ROTATE", entities, m)
+    return _transform_or_copy("ROTATE", entities, m, copy)
 
 
-def scale_entities(entities, base, factor: float) -> TransformCommand:
+def scale_entities(entities, base, factor: float,
+                   copy: bool = False) -> Command:
     from ezdxf.math import Matrix44
 
     m = (Matrix44.translate(-base[0], -base[1], 0.0)
          @ Matrix44.scale(factor, factor, factor)
          @ Matrix44.translate(base[0], base[1], 0.0))
-    return TransformCommand("SCALE", entities, m)
+    return _transform_or_copy("SCALE", entities, m, copy)
 
 
 def _mirror_matrix(p1, p2):

@@ -29,67 +29,133 @@ class EraseTool(Tool):
         self.ctx.finish()
 
 
-class MoveTool(Tool):
+class _DisplacementTool(Tool):
+    """The base-point dialogue MOVE, COPY and STRETCH share (MOVE, p.1211):
+    a base point, or Displacement -- typed D, or Enter, its default -- for a
+    vector; and Enter at the second point takes the first point as the
+    displacement ("2,3 then Enter moves 2 in X and 3 in Y")."""
+
     wants_selection = True
 
     def start(self) -> None:
-        self.name = "MOVE"
         self._entities: list = []
         self._base: Point | None = None
+        self._asking_displacement = False
+
+    def _ask_base(self) -> None:
+        self.prompt("Specify base point or [Displacement] <Displacement>:")
+
+    def _ask_displacement(self) -> None:
+        self._asking_displacement = True
+        self.prompt("Specify displacement <0,0,0>:")
 
     def on_selection(self, entities: list) -> None:
         if not entities:
             self.ctx.finish()
             return
         self._entities = entities
-        self.prompt("Specify base point:")
+        self._ask_base()
+
+    def on_option(self, text: str) -> bool:
+        if self._entities and self._base is None \
+                and not self._asking_displacement \
+                and self.option(text) == "D":
+            self._ask_displacement()
+            return True
+        return False
 
     def on_point(self, point: Point) -> None:
+        if self._asking_displacement:
+            # the typed coordinates ARE the vector, not a place
+            self._asking_displacement = False
+            self._apply(point[0], point[1], last=True)
+            return
         if self._base is None:
             self._base = point
             self.last_point = point
             # the dragged geometry follows the cursor (ghost preview)
             self.ghost_entities = self._entities
             self.ghost_base = point
-            self.prompt("Specify second point:")
-        else:
-            dx, dy = point[0] - self._base[0], point[1] - self._base[1]
-            self.ctx.execute(actions.move_entities(self._entities, dx, dy))
-            self.ctx.finish()
+            self._ask_second(first=True)
+            return
+        self._apply(point[0] - self._base[0], point[1] - self._base[1],
+                    last=False)
+
+    def on_enter(self) -> None:
+        if self._asking_displacement:
+            self.ctx.finish()                 # <0,0,0>: nothing moves
+            return
+        if self._entities and self._base is None:
+            self._ask_displacement()          # <Displacement> is the default
+            return
+        if self._base is not None and self._first_second:
+            # Enter at the second point: the first point is the vector
+            self._apply(self._base[0], self._base[1], last=True)
+            return
+        self.ctx.finish()
+
+    _first_second = True
+
+    def _ask_second(self, first: bool) -> None:
+        self._first_second = first
+        self.prompt("Specify second point or <use first point as displacement>:")
+
+    def _apply(self, dx: float, dy: float, last: bool) -> None:
+        raise NotImplementedError
 
     def preview_segments(self, cursor: Point):
         return [(self._base, cursor)] if self._base else []
 
 
-class CopyTool(Tool):
-    wants_selection = True
+class MoveTool(_DisplacementTool):
+    def start(self) -> None:
+        super().start()
+        self.name = "MOVE"
+
+    def _apply(self, dx: float, dy: float, last: bool) -> None:
+        self.ctx.execute(actions.move_entities(self._entities, dx, dy))
+        self.ctx.finish()
+
+
+class CopyTool(_DisplacementTool):
+    """COPY repeats (COPYMODE 0): after the first copy the prompt offers
+    Exit and Undo, the copies made so far going back one by one."""
 
     def start(self) -> None:
+        super().start()
         self.name = "COPY"
-        self._entities: list = []
-        self._base: Point | None = None
+        self._copies = 0
 
-    def on_selection(self, entities: list) -> None:
-        if not entities:
+    def on_option(self, text: str) -> bool:
+        if super().on_option(text):
+            return True
+        key = self.option(text)
+        if self._base is not None and not self._first_second:
+            if key == "E":
+                self.ctx.finish()
+                return True
+            if key == "U":
+                if self._copies and self.ctx.undo_last is not None:
+                    self.ctx.undo_last()
+                    self._copies -= 1
+                if not self._copies:
+                    self._ask_second(first=True)
+                else:
+                    self._ask_more()
+                return True
+        return False
+
+    def _ask_more(self) -> None:
+        self._first_second = False
+        self.prompt("Specify second point or [Exit/Undo] <Exit>:")
+
+    def _apply(self, dx: float, dy: float, last: bool) -> None:
+        self.ctx.execute(actions.copy_entities(self._entities, dx, dy))
+        self._copies += 1
+        if last:
             self.ctx.finish()
             return
-        self._entities = entities
-        self.prompt("Specify base point:")
-
-    def on_point(self, point: Point) -> None:
-        if self._base is None:
-            self._base = point
-            self.last_point = point
-            self.ghost_entities = self._entities
-            self.ghost_base = point
-            self.prompt("Specify second point (multiple; Enter ends):")
-        else:
-            dx, dy = point[0] - self._base[0], point[1] - self._base[1]
-            self.ctx.execute(actions.copy_entities(self._entities, dx, dy))
-            # AutoCAD COPY stays active for multiple placements.
-
-    def preview_segments(self, cursor: Point):
-        return [(self._base, cursor)] if self._base else []
+        self._ask_more()
 
 
 class RotateTool(Tool):
@@ -101,6 +167,7 @@ class RotateTool(Tool):
         self._base: Point | None = None
         self._reference: float | None = None
         self._ref_first: Point | None = None
+        self._copy = False
 
     def on_selection(self, entities: list) -> None:
         if not entities:
@@ -114,6 +181,12 @@ class RotateTool(Tool):
         # AutoCAD's _global form, into the English key the
         # branches below have always compared against.
         t = self.option(text) or text.upper()
+        if t == "C" and self._base is not None and self._reference is None:
+            # Copy: the originals stay, a rotated copy is made (p.1588)
+            self._copy = True
+            self.ctx.echo(tr("Rotating a copy of the selected objects."))
+            self.prompt("Specify rotation angle or [Copy/Reference]:")
+            return True
         if t in ("R", "REFERENCE") and self._base is not None:
             self._reference = -1.0  # waiting for reference angle
             self.prompt("Specify reference angle (two points or typed):")
@@ -129,11 +202,12 @@ class RotateTool(Tool):
                 self.prompt("Specify new angle:")
             elif self._reference is not None:
                 self.ctx.execute(actions.rotate_entities(
-                    self._entities, self._base, angle - self._reference))
+                    self._entities, self._base, angle - self._reference,
+                    copy=self._copy))
                 self.ctx.finish()
             else:
                 self.ctx.execute(actions.rotate_entities(
-                    self._entities, self._base, angle))
+                    self._entities, self._base, angle, copy=self._copy))
                 self.ctx.finish()
             return True
         return False
@@ -146,7 +220,7 @@ class RotateTool(Tool):
             # which is what AutoCAD shows and what makes the angle obvious.
             self.ghost_entities = self._entities
             self.ghost_base = point
-            self.prompt("Specify rotation angle or [Reference]:")
+            self.prompt("Specify rotation angle or [Copy/Reference]:")
             return
         ang = math.degrees(math.atan2(point[1] - self._base[1],
                                       point[0] - self._base[0]))
@@ -161,7 +235,8 @@ class RotateTool(Tool):
             return
         if self._reference is not None:
             ang -= self._reference
-        self.ctx.execute(actions.rotate_entities(self._entities, self._base, ang))
+        self.ctx.execute(actions.rotate_entities(self._entities, self._base, ang,
+                                                 copy=self._copy))
         self.ctx.finish()
 
     def preview_segments(self, cursor: Point):
@@ -186,6 +261,7 @@ class ScaleTool(Tool):
         self._entities: list = []
         self._base: Point | None = None
         self._ref_length: float | None = None
+        self._copy = False
 
     def on_selection(self, entities: list) -> None:
         if not entities:
@@ -199,6 +275,12 @@ class ScaleTool(Tool):
         # AutoCAD's _global form, into the English key the
         # branches below have always compared against.
         t = self.option(text) or text.upper()
+        if t == "C" and self._base is not None and self._ref_length is None:
+            # Copy: the originals stay, a scaled copy is made (p.1652)
+            self._copy = True
+            self.ctx.echo(tr("Scaling a copy of the selected objects."))
+            self.prompt("Specify scale factor or [Copy/Reference]:")
+            return True
         if t in ("R", "REFERENCE") and self._base is not None:
             self._ref_length = -1.0
             self.prompt("Specify reference length:")
@@ -216,11 +298,12 @@ class ScaleTool(Tool):
                 self.prompt("Specify new length:")
             elif self._ref_length is not None:
                 self.ctx.execute(actions.scale_entities(
-                    self._entities, self._base, value / self._ref_length))
+                    self._entities, self._base, value / self._ref_length,
+                    copy=self._copy))
                 self.ctx.finish()
             else:
                 self.ctx.execute(actions.scale_entities(
-                    self._entities, self._base, value))
+                    self._entities, self._base, value, copy=self._copy))
                 self.ctx.finish()
             return True
         return False
@@ -231,7 +314,7 @@ class ScaleTool(Tool):
             self.last_point = point
             self.ghost_entities = self._entities
             self.ghost_base = point
-            self.prompt("Specify scale factor or [Reference]:")
+            self.prompt("Specify scale factor or [Copy/Reference]:")
             return
         # AutoCAD takes the factor from the distance to the base point, and
         # shows it growing as you go.
@@ -246,7 +329,7 @@ class ScaleTool(Tool):
         if self._ref_length is not None:
             factor = factor / self._ref_length
         self.ctx.execute(actions.scale_entities(
-            self._entities, self._base, factor))
+            self._entities, self._base, factor, copy=self._copy))
         self.ctx.finish()
 
     def preview_segments(self, cursor: Point):

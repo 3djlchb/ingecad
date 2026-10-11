@@ -3951,8 +3951,9 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         d.register("QUICKCALC", self._cmd_quickcalc)
         d.register("ADDSELECTED", lambda *a: self._invoke_command("ADDSELECTED"))
         d.register("U", self._cmd_undo)
-        d.register("UNDO", self._cmd_undo)
+        d.register("UNDO", self._cmd_undo_count)
         d.register("REDO", self._cmd_redo)
+        d.register("OOPS", self._cmd_oops)
         d.register("OPEN", lambda *a: self._open_dialog())
         d.register("CLOSE", lambda *a: self.close_document())
         d.register("CLOSEALL", lambda *a: self.close_all_documents())
@@ -5281,6 +5282,37 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         if back is not None and back in self._layout_names():
             self.switch_layout(back)
 
+    def _cmd_undo_count(self, *args) -> Prompt | None:
+        """UNDO asks how many operations, <1> by default (UNDO, Command
+        Reference); it undid one at once and the number typed next ran as
+        an unknown command. U stays the one-step undo."""
+        def commit(text: str):
+            text = text.strip()
+            if not text:
+                count = 1
+            else:
+                try:
+                    count = int(text)
+                except ValueError:
+                    self.command_line.echo(tr("Requires an integer."))
+                    return ask()
+                if count < 1:
+                    self.command_line.echo(tr("Value must be positive."))
+                    return ask()
+            for _ in range(count):
+                if not self.history.can_undo:
+                    break
+                self._cmd_undo()
+            return None
+
+        def ask():
+            return Prompt(
+                tr("Enter the number of operations to undo <1>:"), commit)
+
+        if args:
+            return commit(str(args[0]))
+        return ask()
+
     def _cmd_undo(self, *args) -> None:
         session = self._block_session
         if session is not None and session.undo_blocked():
@@ -5296,6 +5328,21 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
             # an undo is a change like any click: the layer control, the
             # Layers tab and the Properties tab hear it the same way
             self.tools.changed.emit()
+
+    def _cmd_oops(self, *args) -> None:
+        """OOPS: restore what the last ERASE erased, even after other
+        commands (it was an unknown command)."""
+        from core.actions import EraseCommand, OopsCommand
+
+        erase = next((c for c in reversed(self.history._undo)
+                      if isinstance(c, EraseCommand)), None)
+        command = OopsCommand(erase) if erase is not None else None
+        if command is None or not command.entities:
+            self.command_line.echo(tr("Nothing to restore."))
+            return
+        self.tools._execute(command)
+        self.command_line.echo(
+            tr("{count} restored.", count=len(command.entities)))
 
     def _cmd_redo(self, *args) -> None:
         command = self.history.redo()

@@ -1111,6 +1111,12 @@ class TextTool(Tool):
             self.prompt("Specify start point of text or [Justify/Style]:")
 
     def on_enter(self) -> None:
+        if self.typing and not self._buffer:
+            # Enter on an empty line ends the command, as AutoCAD's TEXT
+            # does (docs/reference/draw/autocad-text-mtext.md); the tool
+            # used to stay open, waiting for a next line forever
+            self.finish_typing()
+            return
         if self.typing:
             self._commit_line()      # Enter: commit and drop to a new line
             self._pos = self._next_line_pos()

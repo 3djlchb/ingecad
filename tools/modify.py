@@ -23,18 +23,16 @@ import math
 from core import actions, editmath, modify, trimmode
 from core.i18n import tr
 from tools.base import Point, Tool
+from tools.edit import _DisplacementTool
 
 
-class StretchTool(Tool):
+class StretchTool(_DisplacementTool):
     """STRETCH: what the crossing window caught moves, the rest holds."""
 
-    wants_selection = True
-
     def start(self) -> None:
+        super().start()
         self.name = "STRETCH"
-        self._entities: list = []
         self._rects: list = []
-        self._base: Point | None = None
         self.ctx.echo(tr("Select objects to stretch by crossing-window or "
                          "crossing-polygon..."))
 
@@ -53,23 +51,14 @@ class StretchTool(Tool):
             # Picked one by one: AutoCAD moves those rather than stretching
             # them, which is what an all-covering rectangle produces here.
             self._rects = [(-1e18, -1e18, 1e18, 1e18)]
-        self.prompt("Specify base point or [Displacement] "
-                    "<Displacement>:")
+        self._ask_base()
 
     def on_point(self, point: Point) -> None:
-        if self._base is None:
-            self._base = point
-            self.last_point = point
-            self.prompt("Specify second point or <use first point as displacement>:")
-            return
-        self._commit(point[0] - self._base[0], point[1] - self._base[1])
+        super().on_point(point)
+        self.ghost_entities = None          # STRETCH draws its own preview
 
-    def on_enter(self) -> None:
-        if self._base is not None:
-            # Enter at the second prompt: the first point IS the displacement.
-            self._commit(self._base[0], self._base[1])
-            return
-        self.ctx.finish()
+    def _apply(self, dx: float, dy: float, last: bool) -> None:
+        self._commit(dx, dy)
 
     def _commit(self, dx: float, dy: float) -> None:
         self.ctx.execute(

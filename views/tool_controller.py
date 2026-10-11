@@ -827,9 +827,11 @@ class ToolController(QObject):
         self._sel_entities_cache = (key, out)
         return out
 
-    def _selectable(self, entities):
+    def _selectable(self, entities, include_off: bool = False):
         """The handles of ``entities`` a pick may take: on a layer that is
-        on, thawed and unlocked, and not isolated away."""
+        on, thawed and unlocked, and not isolated away. ``include_off``:
+        the typed ALL, which AutoCAD documents as "except those objects on
+        frozen or on locked layers" -- a layer that is off is still in."""
         document = getattr(self.window, "document", None)
         if document is None:
             return []
@@ -842,7 +844,8 @@ class ToolController(QObject):
                 continue
             name = entity.dxf.get("layer", "0")
             layer = layers.get(name) if name in layers else None
-            if layer is not None and (layer.is_off() or layer.is_frozen() or layer.is_locked()):
+            if layer is not None and ((layer.is_off() and not include_off)
+                                      or layer.is_frozen() or layer.is_locked()):
                 continue
             handles.append(handle)
         return handles
@@ -3054,7 +3057,8 @@ class ToolController(QObject):
             self._sel_remove = False
         else:
             if option == "ALL":
-                found = set(self._selectable(document.current_space()))
+                found = set(self._selectable(document.current_space(),
+                                             include_off=True))
             elif option == "L":
                 found = set()
                 for entity in reversed(list(document.current_space())):
