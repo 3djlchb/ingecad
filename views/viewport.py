@@ -822,15 +822,25 @@ class Viewport(QOpenGLWidget):
                 break
         self.update()
 
-    def _draw_images(self, gl, mvp, front: bool) -> None:
-        """The raster quads: group <= 0 under the vectors, > 0 over them."""
+    def _scene_groups(self) -> list:
+        """The DRAWORDER groups the scene draws, back to front."""
+        groups = {0}
+        if self._scene is not None:
+            for name in ("triangles", "lines", "points", "thick"):
+                groups |= getattr(self._scene, name).group_set()
+        groups |= {int(entry[3]) for entry in self._image_bufs}
+        return sorted(groups)
+
+    def _draw_images(self, gl, mvp, group: int) -> None:
+        """The raster quads of one DRAWORDER group, under that group's
+        vectors (an image sits under what is drawn over it by default)."""
         if not self._image_bufs:
             return
         prog = self._image_program
         prog.bind()
         prog.setUniformValue(self._loc_image_mvp, mvp)
-        for tex, vao, _vbo, group, handle in self._image_bufs:
-            if (group > 0) != front or handle in self._hidden_images:
+        for tex, vao, _vbo, image_group, handle in self._image_bufs:
+            if int(image_group) != group or handle in self._hidden_images:
                 continue
             tex.bind(0)
             prog.setUniformValue("u_tex", 0)
@@ -1006,27 +1016,33 @@ class Viewport(QOpenGLWidget):
             scene_mvp = self._mvp(*self._scene.origin)
             view_rect = self._view_world_rect()
             self._program.release()
-            self._draw_images(gl, scene_mvp, front=False)
-            self._program.bind()
-            self._program.setUniformValue(self._loc_mvp, scene_mvp)
-            # Fills first, then lines and points on top of them.
-            for name, mode in (("triangles", GL_TRIANGLES),
-                               ("lines", GL_LINES),
-                               ("points", GL_POINTS)):
-                buf = self._scene_bufs.get(name)
-                if buf is None:
-                    continue
-                vao, _vbo, _count = buf
-                batch: Batch = getattr(self._scene, name)
-                vao.bind()
-                for first, count in batch.visible_runs(
-                        view_rect, self.view.scale, MIN_TEXT_PX):
-                    gl.glDrawArrays(mode, first, count)
-                vao.release()
-            self._program.release()
-            self._draw_thick(gl, scene_mvp, view_rect,
-                             self._scene_bufs.get("thick"), self._scene.thick)
-            self._draw_images(gl, scene_mvp, front=True)
+            # DRAWORDER: back, default, front -- each group whole (its
+            # images, fills, lines, points, thick lines) before the next.
+            # One pass per primitive kind used to draw every fill under
+            # every line, so a line sent to the back still crossed a hatch
+            # (GeoCad Yaguarete had to patch it). No DRAWORDER: one group.
+            for group in self._scene_groups():
+                self._draw_images(gl, scene_mvp, group=group)
+                self._program.bind()
+                self._program.setUniformValue(self._loc_mvp, scene_mvp)
+                # Fills first, then lines and points on top of them.
+                for name, mode in (("triangles", GL_TRIANGLES),
+                                   ("lines", GL_LINES),
+                                   ("points", GL_POINTS)):
+                    buf = self._scene_bufs.get(name)
+                    if buf is None:
+                        continue
+                    vao, _vbo, _count = buf
+                    batch: Batch = getattr(self._scene, name)
+                    vao.bind()
+                    for first, count in batch.visible_runs(
+                            view_rect, self.view.scale, MIN_TEXT_PX, group):
+                        gl.glDrawArrays(mode, first, count)
+                    vao.release()
+                self._program.release()
+                self._draw_thick(gl, scene_mvp, view_rect,
+                                 self._scene_bufs.get("thick"),
+                                 self._scene.thick, group=group)
         else:
             self._program.release()
 
@@ -1392,7 +1408,8 @@ class Viewport(QOpenGLWidget):
         return (x0, y0, x1, y1)
 
     def _draw_thick(self, gl, mvp: QMatrix4x4, view_rect, buf, batch,
-                    px_per_unit: Optional[float] = None) -> None:
+                    px_per_unit: Optional[float] = None,
+                    group: Optional[int] = None) -> None:
         """Thick lineweight quads: one draw per visible weight range.
 
         ``view_rect`` of None skips culling — the overlay/ghost/stamp scenes
@@ -1414,6 +1431,8 @@ class Viewport(QOpenGLWidget):
         vao.bind()
         # No run merging here: u_half_world changes per lineweight.
         for i, rng in enumerate(batch.ranges):
+            if group is not None and rng.group != group:
+                continue
             if view_rect is not None and batch.bounds is not None:
                 x0, y0, x1, y1 = view_rect
                 bx0, by0, bx1, by1 = batch.bounds[i]

@@ -94,6 +94,7 @@ class DrawRange:
     first: int  # vertex index (not byte index)
     count: int
     lineweight: float = 0.25  # mm; drives u_half_world for thick ranges
+    group: int = 0            # DRAWORDER group: -1 back, 0, +1 front
 
 
 class Batch:
@@ -109,6 +110,7 @@ class Batch:
         n = len(ranges)
         self.firsts = np.fromiter((r.first for r in ranges), np.int64, n)
         self.counts = np.fromiter((r.count for r in ranges), np.int64, n)
+        self.groups = np.fromiter((r.group for r in ranges), np.int8, n)
         self.bounds = bounds                # (n, 4) world min_x,min_y,max_x,max_y
         self.is_text = is_text              # (n,) bool
         self.text_height = text_height      # (n,) avg glyph height, world units
@@ -121,18 +123,29 @@ class Batch:
         """(N, 2) float32 view of the vertex positions (tests, picking)."""
         return self.data["pos"]
 
+    def group_set(self) -> set:
+        """The DRAWORDER groups this batch has ranges in."""
+        return set(np.unique(self.groups).tolist()) if len(self.groups) else set()
+
     def visible_runs(self, view_rect, px_per_unit: float,
-                     min_text_px: float) -> list[tuple[int, int]]:
-        """Merged (first, count) vertex runs to draw for this view."""
+                     min_text_px: float,
+                     group: Optional[int] = None) -> list[tuple[int, int]]:
+        """Merged (first, count) vertex runs to draw for this view; only
+        those of DRAWORDER ``group`` when given."""
         if not len(self.ranges):
             return []
         if self.bounds is None:
-            return [(0, self.vertex_count)]
-        x0, y0, x1, y1 = view_rect
-        vis = (
-            (self.bounds[:, 0] <= x1) & (self.bounds[:, 2] >= x0)
-            & (self.bounds[:, 1] <= y1) & (self.bounds[:, 3] >= y0)
-        )
+            if group is None or (self.groups == group).all():
+                return [(0, self.vertex_count)]
+            vis = self.groups == group
+        else:
+            x0, y0, x1, y1 = view_rect
+            vis = (
+                (self.bounds[:, 0] <= x1) & (self.bounds[:, 2] >= x0)
+                & (self.bounds[:, 1] <= y1) & (self.bounds[:, 3] >= y0)
+            )
+            if group is not None:
+                vis &= self.groups == group
         if self.is_text is not None and min_text_px > 0.0:
             # A zero height means the metric was never fed for that range —
             # an MTEXT's background-mask quad arrives through a path that
@@ -283,6 +296,7 @@ def _pack_standard(
                 first + s * verts_per_prim,
                 (e - s) * verts_per_prim,
                 bucket.lineweight,
+                bucket.group,
             ))
             bounds.append(np.array([
                 block[:, 0].min(), block[:, 1].min(),
@@ -375,7 +389,8 @@ def _pack_thick(
         for s, e in zip(starts, ends):
             block = seg[s:e].reshape(-1, 2)
             ranges.append(DrawRange(
-                bucket.layer, first + s * 6, (e - s) * 6, bucket.lineweight))
+                bucket.layer, first + s * 6, (e - s) * 6, bucket.lineweight,
+                bucket.group))
             bounds.append(np.array([
                 block[:, 0].min(), block[:, 1].min(),
                 block[:, 0].max(), block[:, 1].max(),
