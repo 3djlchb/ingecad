@@ -3676,8 +3676,6 @@ class ToolController(QObject):
                 return cached[1]
             empty = np.empty((0, 4))
             return empty, empty, empty
-        result = (self.index.segments_of(self.selection),
-                  self.index.circles_of(self.selection),
-                  self.index.boxes_of(self.selection))
+        result = self.index.highlight_of(self.selection)
         self._highlight_cache = (key, result)
         return result
