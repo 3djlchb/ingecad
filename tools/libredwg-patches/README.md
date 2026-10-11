@@ -43,8 +43,8 @@ without it. A/B sweep of 120 corpus drawings through IngeCAD's save path
 (load_dwg -> intermediate DXF -> old and new `dxf2dwg` -> ODA): 120/120 the
 same (102 read by both, 15 rejected by both, 3 IngeCAD cannot open); before
 the columns fix one bridge plan crashed ODA with the new build only.
-Upstream branches in `~/Proyectos/externos/libredwg`:
-`in_dxf-dim-context-data` and `in_dxf-r2000-viewport-on` (not pushed yet).
+Upstream: #1432 (context import: prefix, dimension body, 70, columns) and
+#1433 (r2000 viewports on). The RADIM/DMDIM promotion stays vendor-only.
 
 ## 2026-10-08: xref blocks survive Save as DWG (IngeCAD #66)
 
