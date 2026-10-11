@@ -125,7 +125,8 @@ def _patch_dimrnd_zero() -> None:
 
 
 def _patch_fixed_height_dimension_text() -> None:
-    """A text style with a fixed height sets a dimension's text unscaled.
+    """A text style with a fixed height sets a dimension's text unscaled;
+    a negative DIMLFAC scales only in paper space.
 
     AutoCAD uses that height as it is -- DIMSCALE does not touch it -- but
     ezdxf multiplied it by DIMSCALE, so every redraw of such a dimension
@@ -149,10 +150,26 @@ def _patch_fixed_height_dimension_text() -> None:
         height = text_style.dxf.get("height", 0.0)
         if height > 0.0:
             self.text_height = height
+        if self.measurement_factor < 0.0:
+            # "negative values are applied to paper space only" (DIMLFAC):
+            # a model-space dimension read -10.00 for 10 (a corpus plan).
+            self.measurement_factor = -self.measurement_factor \
+                if _in_paper_space(dim_style.dimension) else 1.0
 
     __init__._ingecad_patch = True
     __init__._ingecad_fixed_height = True
     Measurement.__init__ = __init__
+
+
+def _in_paper_space(entity) -> bool:
+    """True when ``entity`` sits directly on a paper-space layout."""
+    doc = entity.doc
+    owner = entity.dxf.get("owner", None)
+    if doc is None or owner is None:
+        return False
+    record = doc.entitydb.get(owner)
+    return record is not None and record.dxftype() == "BLOCK_RECORD" \
+        and record.is_any_paperspace
 
 
 def _patch_single_vertex_leader() -> None:
@@ -773,7 +790,7 @@ def _patch_linear_dimension_direction() -> None:
     def __init__(self, dimension, ucs=None, override=None):
         dxf = dimension.dxf
         raw_angle = float(dxf.get("angle", 0.0))
-        angle = reading_angle(raw_angle)
+        angle = reading_angle(aligned_angle(dimension, raw_angle))
         p1 = _Vec2(dxf.get("defpoint2", (0, 0)))
         p2 = _Vec2(dxf.get("defpoint3", (0, 0)))
         against = (p2 - p1).dot(_Vec2.from_deg_angle(angle)) < 0.0
@@ -792,6 +809,45 @@ def _patch_linear_dimension_direction() -> None:
 
     __init__._ingecad_patch = True
     LinearDimension.__init__ = __init__
+
+    from ezdxf.entities import dimension as dimension_module
+    from ezdxf.lldxf import const
+
+    tools = dimension_module.MEASUREMENT_TOOLS
+    measure = tools[const.DIM_ALIGNED]
+    if not getattr(measure, "_ingecad_patch", False):
+        def measure_aligned(dim):
+            raw = float(dim.dxf.get("angle", 0.0))
+            angle = aligned_angle(dim, raw)
+            if abs(angle - raw) < 1e-12:
+                return measure(dim)
+            dim.dxf.angle = angle
+            try:
+                return measure(dim)
+            finally:
+                dim.dxf.angle = raw
+
+        measure_aligned._ingecad_patch = True
+        tools[const.DIM_ALIGNED] = measure_aligned
+
+
+def aligned_angle(dimension, angle: float) -> float:
+    """The direction a linear dimension is measured along, in degrees.
+
+    An ALIGNED dimension runs along its two origins whatever its group 50
+    says: AutoCAD writes 0 there (464 of 803 aligned dimensions of a corpus
+    sample), and ezdxf, which measures and draws along that angle, turned a
+    vertical 2.54 into "0" on the first grip edit. A rotated dimension keeps
+    its ``angle``.
+    """
+    dxf = dimension.dxf
+    if int(dxf.get("dimtype", 0)) & 7 != 1:
+        return angle
+    p1 = _Vec2(dxf.get("defpoint2", (0, 0)))
+    p2 = _Vec2(dxf.get("defpoint3", (0, 0)))
+    if p1.isclose(p2):
+        return angle
+    return (p2 - p1).angle_deg
 
 
 def reading_angle(angle: float) -> float:
