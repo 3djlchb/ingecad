@@ -35,6 +35,7 @@ def apply() -> None:
     _patch_dxfreplace_mixed_surrogates()
     _patch_single_vertex_leader()
     _patch_dimrnd_zero()
+    _patch_fixed_height_dimension_text()
     _patch_dms_angular_text()
 
 
@@ -120,6 +121,37 @@ def _patch_dimrnd_zero() -> None:
             self.text_round = None
 
     __init__._ingecad_patch = True
+    Measurement.__init__ = __init__
+
+
+def _patch_fixed_height_dimension_text() -> None:
+    """A text style with a fixed height sets a dimension's text unscaled.
+
+    AutoCAD uses that height as it is -- DIMSCALE does not touch it -- but
+    ezdxf multiplied it by DIMSCALE, so every redraw of such a dimension
+    (a grip, STRETCH, a property change) blew its text up: a colleague's
+    portico plan (DIMSCALE 304.8, style height 62.5) went from 62.5 to
+    19050 on the first grip drop. The authors' own blocks are the judge:
+    all 130 such dimensions of nine corpus plans carry the bare height.
+    Drop it if ezdxf stops scaling a fixed height.
+    """
+    from ezdxf.render import dim_base
+    from ezdxf.render.dim_base import Measurement
+
+    if getattr(Measurement.__init__, "_ingecad_fixed_height", False):
+        return
+    original = Measurement.__init__
+
+    def __init__(self, dim_style, *args, **kwargs):
+        original(self, dim_style, *args, **kwargs)
+        doc = dim_style.dimension.doc
+        text_style = dim_base.get_text_style(doc, self.text_style_name)
+        height = text_style.dxf.get("height", 0.0)
+        if height > 0.0:
+            self.text_height = height
+
+    __init__._ingecad_patch = True
+    __init__._ingecad_fixed_height = True
     Measurement.__init__ = __init__
 
 
