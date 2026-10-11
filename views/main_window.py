@@ -4691,9 +4691,11 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         layout = (self.document.doc.modelspace() if name == "Model"
                   else self.document.doc.layouts.get(name))
         dialog = PageSetupDialog(self, layout)
-        if not dialog.exec():
+        accepted = dialog.exec()
+        values = dialog.values() if accepted else None
+        dialog.deleteLater()           # a child of the window: free it
+        if not accepted:
             return
-        values = dialog.values()
         width, height = values.pop("width"), values.pop("height")
         self.history.execute(layout_ops.page_setup_command(
             layout, width, height, values.pop("margins"),

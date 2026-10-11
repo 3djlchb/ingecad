@@ -1497,3 +1497,35 @@ def test_each_page_setup_margin_sits_on_its_side_of_the_sheet(qapp):
     finally:
         dialog.close()
         win.close()
+
+
+def test_page_setup_leaves_nothing_behind(qapp):
+    """Every Page Setup used to stay alive after closing: a child of the
+    window, held by a focusChanged lambda that kept repainting it."""
+    from PySide6.QtCore import QEvent, SIGNAL
+    from PySide6.QtWidgets import QApplication
+
+    from modal import drive_modal
+    from views.main_window import MainWindow
+    from views.page_setup_dialog import PageSetupDialog
+
+    win = MainWindow()
+    win.show()
+    win.new_document()
+    app = QApplication.instance()
+    focus = SIGNAL("focusChanged(QWidget*,QWidget*)")
+    try:
+        before = app.receivers(focus)
+        for close in ("reject", "accept"):
+            errors: list = []
+            drive_modal(PageSetupDialog,
+                        lambda dialog, c=close: getattr(dialog, c)(), errors)
+            win._invoke_command("PAGESETUP")
+            assert not errors
+        app.sendPostedEvents(None, QEvent.DeferredDelete)
+        qapp.processEvents()
+        assert app.receivers(focus) == before
+        assert not win.findChildren(PageSetupDialog)
+    finally:
+        win.document.dirty = False
+        win.close()

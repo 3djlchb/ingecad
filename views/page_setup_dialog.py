@@ -114,6 +114,17 @@ class _MarginsPreview(QWidget):
 
 
 class PageSetupDialog(QDialog):
+    def _on_focus_changed(self, _old, _new) -> None:
+        self.margins_preview.update()
+
+    def done(self, result: int) -> None:
+        try:
+            QApplication.instance().focusChanged.disconnect(
+                self._on_focus_changed)
+        except (RuntimeError, TypeError):
+            pass                       # already disconnected
+        super().done(result)
+
     def __init__(self, window, layout) -> None:
         super().__init__(window)
         self.setWindowTitle(tr("Page Setup — {name}", name=layout.name))
@@ -212,8 +223,10 @@ class PageSetupDialog(QDialog):
         margins_lay.setColumnStretch(1, 1)
         paper_form.addRow(QLabel(tr("Printable margins:"), self))
         paper_form.addRow(margins_box)
-        QApplication.instance().focusChanged.connect(
-            lambda _old, _new: self.margins_preview.update())
+        # The margin being edited is highlighted in the preview. A bound
+        # method, disconnected in done(): the lambda this was kept every
+        # closed dialog alive and repainting on each focus change.
+        QApplication.instance().focusChanged.connect(self._on_focus_changed)
 
         # -- Plot area ---------------------------------------------------------
         area_group = QGroupBox(tr("Plot area"), self)

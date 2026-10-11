@@ -177,3 +177,30 @@ def test_opening_a_drawing_already_open_brings_its_tab_back(qapp, win, tmp_path)
     assert win.document.name == "uno.dxf"
     assert "uno.dxf is already open." in win.command_line.history.toPlainText() \
         or "uno.dxf ya está abierto." in win.command_line.history.toPlainText()
+
+
+@pytest.mark.parametrize("typed", [("MOVE",), ("LINE", "0,0"), ("WBLOCK",)])
+def test_a_command_halfway_ends_with_new_and_open(qapp, win, tmp_path, typed,
+                                                   monkeypatch):
+    """Rafael's sixth review: WBLOCK waiting for its objects survived File >
+    New and went on to act on the new drawing. AutoCAD's command belongs
+    to the drawing it started in."""
+    from PySide6.QtCore import Qt
+
+    monkeypatch.setattr(win.tools, "ask_save_file",
+                        lambda *a: str(tmp_path / "bloque.dwg"))
+
+    def type_(text):
+        edit = win.command_line.input
+        edit.setFocus()
+        QTest.keyClicks(edit, text)
+        QTest.keyClick(edit, Qt.Key_Return)
+
+    for opening in (lambda: win.new_document(),
+                    lambda: _open(qapp, win, _drawing(tmp_path, "uno.dxf"))):
+        for text in typed:
+            type_(text)
+        qapp.processEvents()
+        assert win.tools.tool is not None or win.tools._selecting_for
+        opening()
+        assert win.tools.tool is None and win.tools._selecting_for is None

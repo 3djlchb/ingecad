@@ -476,3 +476,46 @@ def test_the_palette_lists_images_and_pdfs_too_and_detaches_them(qapp, tmp_path)
     finally:
         win.document.dirty = False
         win.close()
+
+
+@pytest.mark.parametrize("answer", ["Y", ""])
+def test_browsing_to_a_block_already_defined_asks_to_redefine(qapp, tmp_path,
+                                                              answer):
+    # Rafael's sixth review: he edited his title block and inserted it
+    # again; IngeCAD silently inserted the old definition. AutoCAD asks
+    # "Redefine it?" -- Yes updates every reference, No (Enter) keeps it.
+    from views.main_window import MainWindow
+
+    def title(path, width):
+        doc = ezdxf.new("R2018")
+        doc.modelspace().add_lwpolyline(
+            [(0, 0), (width, 0), (width, 210), (0, 210)], close=True)
+        doc.saveas(path)
+
+    path = tmp_path / "Formato.dxf"
+    title(path, 297)
+    win = MainWindow()
+    win.new_document("m")
+    win.tools._ask_choice = lambda prompt, items, default="": items[-1]
+    win.tools.pick_drawing_file = lambda: str(path)
+    try:
+        win._invoke_command("INSERT")
+        win.tools.on_text("0,0")
+        title(path, 420)                       # the file is edited
+        win._invoke_command("INSERT")
+        assert "Redefine it?" in win.tools.current_prompt \
+            or "¿Desea redefinirlo?" in win.tools.current_prompt
+        win.tools.on_text(answer)
+        win.tools.on_text("500,0")
+        block = win.document.doc.blocks.get("Formato")
+        widths = [max(x for x, *_ in e.get_points()) for e in block]
+        assert widths == ([420] if answer == "Y" else [297])
+        assert len(win.document.modelspace().query("INSERT")) == 2
+        if answer == "Y":
+            win.history.undo()                 # the second insert
+            win.history.undo()                 # the redefinition
+            block = win.document.doc.blocks.get("Formato")
+            assert [max(x for x, *_ in e.get_points()) for e in block] == [297]
+    finally:
+        win.document.dirty = False
+        win.close()

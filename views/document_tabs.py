@@ -177,6 +177,12 @@ class DocumentTabsMixin:
 
     def _tab_for_new_document(self, document) -> None:
         """New or Open: a tab of its own, or the untouched Drawing1's."""
+        # A command halfway belongs to the drawing it started in: left
+        # running, WBLOCK went on to act on the new one (Rafael's sixth
+        # review). Ended here, while the window still holds its drawing.
+        tools = getattr(self, "tools", None)
+        if tools is not None:
+            tools.cancel()
         current = self._session
         if current is not None and current.pristine():
             self._drop_block_session()

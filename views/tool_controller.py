@@ -3551,7 +3551,15 @@ class ToolController(QObject):
             # Route through the dedicated command: it re-renders the block
             # and drops the old one, which the generic snapshot cannot undo.
             self.window.viewport.unhide_handles([handle])
-            if role == "dim_text":
+            radial = int(entity.dxf.get("dimtype", 0)) & 7 in (3, 4)
+            if role == "dim_text" and radial:
+                # A radius or diameter is laid out FROM its text: the line
+                # turns to follow it and the arrow walks around the circle,
+                # as AutoCAD draws it. Moving the number alone left them
+                # pointing at nothing (Rafael's sixth review, #67).
+                command = actions.DimTextEditCommand(
+                    entity, location=(wx, wy), turn=True)
+            elif role == "dim_text":
                 # Pure translation: a foreign dimension keeps its author's
                 # block stroke for stroke (DIMTEDIT still offers the full
                 # re-rendering options when asked for them).

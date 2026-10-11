@@ -33,6 +33,31 @@ def apply() -> None:
     _patch_linear_dimension_direction()
     _patch_dxfreplace_mixed_surrogates()
     _patch_single_vertex_leader()
+    _patch_dimrnd_zero()
+
+
+def _patch_dimrnd_zero() -> None:
+    """DIMRND 0 means "no rounding", as AutoCAD reads it.
+
+    ezdxf hands DIMRND straight to ``xround``, where 0 means "remove the
+    fraction", so every dimension of a style with DIMRND written as 0 -- an
+    OK in the Modify Dimension Style dialog, or a colleague's drawing that
+    carries the default explicitly -- lost its decimals on the next redraw
+    (12.35 drawn as 12; Rafael's sixth review).
+    """
+    from ezdxf.render.dim_base import Measurement
+
+    if getattr(Measurement.__init__, "_ingecad_patch", False):
+        return
+    original = Measurement.__init__
+
+    def __init__(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        if not self.text_round:
+            self.text_round = None
+
+    __init__._ingecad_patch = True
+    Measurement.__init__ = __init__
 
 
 def _patch_single_vertex_leader() -> None:

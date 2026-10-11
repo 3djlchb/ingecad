@@ -68,6 +68,8 @@ class InsertTool(Tool):
                                      names[0] if names else browse)
         if chosen == browse:
             chosen = self._block_from_file()
+            if self._await == "redefine":
+                return                    # the answer comes first
         if not chosen:
             self.ctx.finish()
             return
@@ -76,10 +78,8 @@ class InsertTool(Tool):
 
     def _block_from_file(self) -> str | None:
         """Browse...: define the chosen drawing as a block named after it, or
-        take the block of that name if the drawing already has one."""
+        or -- asked first -- redefine the block of that name."""
         from pathlib import Path
-
-        from core import xrefs
 
         pick = getattr(self.ctx.services, "pick_drawing_file", None)
         filename = pick() if callable(pick) else ""
@@ -92,22 +92,53 @@ class InsertTool(Tool):
                                "document", None)
         name = path.stem
         if document is not None and name in document.doc.blocks:
-            self.ctx.echo(tr("Block {name} is already defined; inserting it.",
-                             name=name))
+            # AutoCAD asks before touching a definition every reference
+            # shares (Rafael's sixth review: ours inserted the old one
+            # without a word, and the edited file never arrived).
+            self._redefine = (name, path)
+            self._await = "redefine"
+            self.entity_picker = True
+            self.prompt(self.REDEFINE, name=name)
             return name
+        source = self._read(path)
+        if source is None:
+            return None
+        self.ctx.execute(actions.DefineBlockFromFileCommand(name, source))
+        return name
+
+    REDEFINE = 'Block "{name}" already exists. Redefine it? [Yes/No] <No>:'
+
+    def _read(self, path):
+        from core import xrefs
+
         try:
-            source = xrefs.read_drawing(path)
+            return xrefs.read_drawing(path)
         except Exception as exc:          # noqa: BLE001 - unreadable file
             self.ctx.echo(tr("Cannot read {file}: {error}",
                              file=path.name, error=exc))
             return None
-        self.ctx.execute(actions.DefineBlockFromFileCommand(name, source))
-        return name
+
+    def _answer_redefine(self, text: str) -> None:
+        name, path = self._redefine
+        self._await = None
+        self.entity_picker = False
+        if self.option(text) == "Y":
+            source = self._read(path)
+            if source is None:
+                self.ctx.finish()
+                return
+            self.ctx.execute(actions.RedefineBlockFromFileCommand(name, source))
+            self.ctx.echo(tr("Block {name} redefined.", name=name))
+        self._block_name = name
+        self.prompt("Specify insertion point [Scale/Rotate]:")
 
     def on_option(self, text: str) -> bool:
         # The resolver first: it turns the localized keyword, or
         # AutoCAD's _global form, into the English key the
         # branches below have always compared against.
+        if self._await == "redefine":
+            self._answer_redefine(text)
+            return True
         if self._text_state:
             # an attribute value: Enter keeps the default shown
             from core import attributes as att
@@ -238,6 +269,9 @@ class InsertTool(Tool):
         return bool(self._text_state)
 
     def on_enter(self) -> None:
+        if self._await == "redefine":
+            self._answer_redefine("")     # <No>: the drawing's own block
+            return
         if self._text_state:
             self.on_option("")
             return

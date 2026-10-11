@@ -1098,6 +1098,55 @@ class DefineBlockFromFileCommand(Command):
         document.dirty = True
 
 
+class RedefineBlockFromFileCommand(Command):
+    """INSERT ▸ Browse onto a name the drawing already has, answered Yes to
+    "Redefine it?": the block's content becomes the file's model space and
+    every reference to it shows the new one, as AutoCAD's does.
+
+    The old content is unlinked, not destroyed, so undo puts the very same
+    entities back.
+    """
+
+    name = "INSERT"
+    needs_regen = True                  # every reference changes at once
+
+    def __init__(self, block_name: str, source_document) -> None:
+        self.block_name = block_name
+        self.source = source_document
+        self._old: list = []
+        self._new: list = []
+        self._old_base = None
+
+    def do(self, document) -> None:
+        from ezdxf import xref
+
+        doc = document.doc
+        block = doc.blocks.get(self.block_name)
+        self._old = list(block)
+        for entity in self._old:
+            block.unlink_entity(entity)
+        self._old_base = block.block.dxf.base_point
+        src = self.source.doc
+        block.block.dxf.base_point = src.header.get("$INSBASE", (0, 0, 0))
+        loader = xref.Loader(src, doc, conflict_policy=xref.ConflictPolicy.KEEP)
+        loader.load_modelspace(target_layout=block)
+        loader.execute()
+        self._new = list(block)
+        document.dirty = True
+
+    def undo(self, document) -> None:
+        doc = document.doc
+        block = doc.blocks.get(self.block_name)
+        for entity in self._new:
+            block.unlink_entity(entity)
+            doc.entitydb.delete_entity(entity)
+        self._new = []
+        for entity in self._old:
+            block.add_entity(entity)
+        block.block.dxf.base_point = self._old_base
+        document.dirty = True
+
+
 def insert_block(name, point, xscale=1.0, yscale=None,
                  rotation=0.0) -> AddEntityCommand:
     ys = xscale if yscale is None else yscale
@@ -1857,12 +1906,16 @@ class DimTextEditCommand(Command):
         return [self.dim]
 
     def __init__(self, dim, *, location=None, halign: str | None = None,
-                 home: bool = False, angle: float | None = None) -> None:
+                 home: bool = False, angle: float | None = None,
+                 turn: bool = False) -> None:
         self.dim = dim
         self.location = location
         self.halign = halign
         self.home = home
         self.angle = angle
+        #: a radius/diameter turns to point at its new text location (the
+        #: text grip), as AutoCAD's does: the arrow walks around the circle
+        self.turn = turn
         self._snapshot = None
 
     def do(self, document) -> None:
@@ -1872,8 +1925,12 @@ class DimTextEditCommand(Command):
                 d.dxf.dimtype,
                 d.dxf.get("text_midpoint", None),
                 d.dxf.get("text_rotation", None),
-                list(d.get_xdata("ACAD")) if d.has_xdata("ACAD") else None)
+                list(d.get_xdata("ACAD")) if d.has_xdata("ACAD") else None,
+                d.dxf.get("defpoint", None),
+                d.dxf.get("defpoint4", None))
         old_block = d.dxf.get("geometry", None)
+        if self.location is not None and self.turn:
+            _turn_radial(d, self.location)
         if self.location is not None:
             override = d.override()
             override.set_location(
@@ -1896,9 +1953,14 @@ class DimTextEditCommand(Command):
 
     def undo(self, document) -> None:
         d = self.dim
-        dimtype, midpoint, text_rotation, xdata = self._snapshot
+        (dimtype, midpoint, text_rotation, xdata,
+         defpoint, defpoint4) = self._snapshot
         edited_block = d.dxf.get("geometry", None)
         d.dxf.dimtype = dimtype
+        if defpoint is not None:
+            d.dxf.defpoint = defpoint
+        if defpoint4 is not None:
+            d.dxf.defpoint4 = defpoint4
         if midpoint is None:
             d.dxf.discard("text_midpoint")
         else:
@@ -1913,6 +1975,33 @@ class DimTextEditCommand(Command):
         d.render()
         _drop_dim_block(document, edited_block)
         document.dirty = True
+
+
+def _turn_radial(dim, toward) -> None:
+    """Turn a radius or diameter dimension about its centre so that it
+    points at ``toward``. Radius: defpoint is the centre, defpoint4 the
+    point on the circle. Diameter: defpoint and defpoint4 are the two ends,
+    the centre between them."""
+    import math
+
+    kind = int(dim.dxf.get("dimtype", 0)) & 7
+    p = dim.dxf.get("defpoint", None)
+    q = dim.dxf.get("defpoint4", None)
+    if kind not in (3, 4) or p is None or q is None:
+        return
+    if kind == 4:
+        cx, cy, radius = p.x, p.y, math.hypot(q.x - p.x, q.y - p.y)
+    else:
+        cx, cy = (p.x + q.x) / 2.0, (p.y + q.y) / 2.0
+        radius = math.hypot(q.x - p.x, q.y - p.y) / 2.0
+    dx, dy = toward[0] - cx, toward[1] - cy
+    length = math.hypot(dx, dy)
+    if length <= 1e-12 or radius <= 0.0:
+        return
+    ux, uy = dx / length, dy / length
+    dim.dxf.defpoint4 = (cx + ux * radius, cy + uy * radius, q.z)
+    if kind == 3:
+        dim.dxf.defpoint = (cx - ux * radius, cy - uy * radius, p.z)
 
 
 def dim_text_edit(dim, **kwargs) -> DimTextEditCommand:
