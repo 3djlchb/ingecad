@@ -2055,5 +2055,6 @@
   "Enter the number of operations to undo <1>:": "Indique el número de operaciones que desea deshacer <1>:",
   "Requires an integer.": "Se requiere un número entero.",
   "Nothing to restore.": "Nada que restaurar.",
-  "{count} restored.": "{count} restaurado(s)."
+  "{count} restored.": "{count} restaurado(s).",
+  "Through": "Punto a atravesar"
 }

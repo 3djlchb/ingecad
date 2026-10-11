@@ -174,8 +174,10 @@ class LineTool(Tool):
                 self.ctx.undo_last()
             self._points.pop()
             self.last_point = self._points[-1] if self._points else None
-            self.prompt("Specify next point or [Undo]:" if self._points
-                        else "Specify first point:")
+            if self._points:
+                self._next_prompt()     # Close is back once 3 points stand
+            else:
+                self.prompt("Specify first point:")
             return True
         if self._locked_dir is not None and self._points:
             # tangent continuation accepts a typed length

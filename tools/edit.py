@@ -406,7 +406,9 @@ class OffsetTool(Tool):
     a wall by the thickness of another one without doing arithmetic.
     """
 
-    distance = 10.0        # sticky through the session, like AutoCAD's
+    #: sticky through the session, like AutoCAD's OFFSETDIST; None is
+    #: Through, the value it starts with (-1: "<Through>", OFFSET p.1286)
+    distance: float | None = None
     erase_source = False
     layer_mode = "source"  # or "current"
 
@@ -430,7 +432,8 @@ class OffsetTool(Tool):
                          layer=tr("Current") if cls.layer_mode == "current"
                          else tr("Source")))
         self.prompt("Specify offset distance or [Through/Erase/Layer] <{d}>:",
-               d=f"{cls.distance:g}")
+                    d=tr("Through") if cls.distance is None
+                    else f"{cls.distance:g}")
 
     def _ask_object(self) -> None:
         self._phase = "object"
@@ -467,6 +470,7 @@ class OffsetTool(Tool):
         if self._phase == "distance":
             if token in ("T", "THROUGH"):
                 self._through = True
+                cls.distance = None           # remembered, as OFFSETDIST -1
                 self._ask_object()
                 return True
             if token in ("E", "ERASE"):
@@ -513,7 +517,9 @@ class OffsetTool(Tool):
             self.on_option("")
             return
         if self._phase == "distance":
-            self._ask_object()          # Enter takes the <current> distance
+            # Enter takes the <current> distance -- or Through
+            self._through = type(self).distance is None
+            self._ask_object()
             return
         self.ctx.finish()
 

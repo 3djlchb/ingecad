@@ -113,3 +113,16 @@ def test_erase_all_takes_layers_that_are_off_and_oops_gives_back(win):
     _type(win, "OOPS")
     assert _circles(win) == [(0, 0, 1), (5, 0, 1)]
     assert len(win.document.modelspace().query("LINE")) == 1
+
+
+def test_offset_starts_at_through_and_line_keeps_close_after_undo(win):
+    from tools.edit import OffsetTool
+
+    OffsetTool.distance = None            # a fresh session: <Through>
+    _type(win, "OFFSET")
+    assert "<Through>" in win.command_line.history.toPlainText().splitlines()[-1]
+    win.tools.cancel()
+    _type(win, "LINE", "0,0", "10,0", "10,10", "0,10", "U")
+    assert "Close" in win.command_line.history.toPlainText().splitlines()[-1]
+    _type(win, "C")
+    assert len(win.document.modelspace().query("LINE")) == 3
