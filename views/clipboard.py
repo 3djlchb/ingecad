@@ -21,15 +21,22 @@ from __future__ import annotations
 import io
 import itertools
 import os
+import uuid
 from typing import Optional
 
 from PySide6.QtCore import QMimeData, QThread, Signal
 
 MIME = "application/x-ingecad-dxf"
-#: Which copy this is: "<pid>:<n>". A window pastes its own copy from memory.
+#: Which copy this is: "<process>-<pid>:<n>". A window pastes its own copy
+#: from memory.
 ID_MIME = "application/x-ingecad-clip-id"
 
 _counter = itertools.count(1)
+#: This process among the others. Not the pid alone: inside the Flatpak
+#: every IngeCAD is pid 2 of its own sandbox, so two windows numbered their
+#: copies alike and a window took another's newer copy for its own older
+#: one (found running two Flatpak instances, 2026-10-10).
+_PROCESS = uuid.uuid4().hex[:12]
 
 
 def clip_document(entities, base):
@@ -81,7 +88,7 @@ def build(entities, base):
         doc = clip_document(entities, base)
     except Exception:  # noqa: BLE001
         return None
-    return f"{os.getpid()}:{next(_counter)}", doc
+    return f"{_PROCESS}-{os.getpid()}:{next(_counter)}", doc
 
 
 def put(clip_id: str, data: bytes) -> None:

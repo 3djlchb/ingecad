@@ -351,3 +351,17 @@ def test_a_big_copy_reaches_the_system_clipboard_when_the_window_is_left(qapp):
         for win in (first, second):
             win.document.dirty = False
             win.close()
+
+
+def test_copy_ids_differ_between_processes_with_the_same_pid():
+    """Inside the Flatpak every IngeCAD is pid 2 of its sandbox: a copy id
+    made of the pid and a counter was the same in two windows."""
+    import subprocess
+    import sys
+
+    code = ("import sys; sys.path.insert(0, %r); from views import clipboard; "
+            "print(clipboard._PROCESS)") % str(__import__("pathlib").Path(__file__).resolve().parents[1])
+    ids = {subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                          env={**__import__("os").environ, "QT_QPA_PLATFORM": "offscreen"}
+                          ).stdout.strip() for _ in range(2)}
+    assert len(ids) == 2 and all(ids)
