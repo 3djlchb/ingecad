@@ -78,3 +78,24 @@ def test_a_message_between_prompt_and_answer_repeats_the_prompt(qapp):
     assert line.history.toPlainText().splitlines()[-1] == \
         "Specify first point: 5,5"
     line.deleteLater()
+
+
+def test_an_answer_at_select_objects_follows_that_prompt(qapp):
+    """Found by the release tour: at TRIM's "Select cutting edges" (and every
+    "Select objects:") the answer was written after the PREVIOUS command's
+    prompt -- "Specify next point or [Undo]: O" in the middle of TRIM --
+    since a selection prompt was echoed as plain text."""
+    win = _window(qapp)
+    try:
+        for text in ("LINE", "0,0", "10,0", "", "TRIM", "O", ""):
+            _type(win, text)
+        text = win.command_line.history.toPlainText()
+        trim_part = text[text.rindex(": TRIM"):]
+        assert "[Undo]" not in trim_part and "desHacer" not in trim_part, trim_part
+        lines = trim_part.splitlines()
+        edges = [l for l in lines if l.rstrip().endswith(": O")]
+        assert edges and "edge" in edges[0].lower() or "arista" in edges[0].lower(), lines
+        win.tools.cancel()
+    finally:
+        win.document.dirty = False
+        win.close()

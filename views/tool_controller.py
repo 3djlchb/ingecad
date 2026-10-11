@@ -622,7 +622,7 @@ class ToolController(QObject):
                 self.tool.on_selection(entities)
             else:
                 self._selecting_for = self.tool
-                self.window.command_line.echo(self.tool.selection_prompt())
+                self.window.command_line.echo_prompt(self.tool.selection_prompt())
         self.changed.emit()
 
     # -- services for editing tools (ToolContext.services) ---------------------
@@ -669,7 +669,7 @@ class ToolController(QObject):
         if self.tool is None:
             return
         self._selecting_for = self.tool
-        self.window.command_line.echo(self.tool.selection_prompt())
+        self.window.command_line.echo_prompt(self.tool.selection_prompt())
         self.changed.emit()
 
     def ask_save_file(self, caption: str, suggested: str, name_filter: str):
@@ -3074,7 +3074,7 @@ class ToolController(QObject):
             if not text.strip():
                 self.finish_selection()
                 return True
-            self.window.command_line.echo(self._selecting_for.selection_prompt())
+            self.window.command_line.echo_prompt(self._selecting_for.selection_prompt())
             return True
         if self.tool is None:
             return False
