@@ -19,6 +19,7 @@ from ezdxf.document import Drawing
 from ezdxf.lldxf.const import DXFStructureError
 
 from core import ezdxf_patches
+from core import dimassoc  # noqa: F401 -- registers DIMASSOC before any read
 
 ezdxf_patches.apply()
 

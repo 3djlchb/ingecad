@@ -1369,6 +1369,9 @@ class AddDimensionCommand(Command):
         #: DIM's Layer option: the layer the dimension lands on instead of
         #: the current one. None = $CLAYER, as every other dimension.
         self.layer: str | None = None
+        #: {bit: dimassoc.Reference}: the object points the definition
+        #: points were snapped to; tied when $DIMASSOC is 2 (core/dimassoc).
+        self.associate: dict | None = None
 
     def do(self, document) -> None:
         override = self._factory(self.space(document), document)
@@ -1398,12 +1401,20 @@ class AddDimensionCommand(Command):
         # AFTER the layer lands: the stamp dresses the block in the
         # dimension's layer.
         _stamp_dim_block_byblock(document, self.dim)
+        if self.associate:
+            from core import dimassoc
+
+            if dimassoc.dimassoc_mode(document) == 2:
+                dimassoc.attach(document, self.dim, self.associate)
         document.dirty = True
 
     def undo(self, document) -> None:
         msp = self.space(document)
         block = self._block_name
         if self.dim is not None and self.dim.is_alive:
+            from core import dimassoc
+
+            dimassoc.detach(document, self.dim)
             # DIMTEDIT re-renders into a fresh *D block: trust the entity's
             # current geometry attribute over the name captured at creation.
             block = self.dim.dxf.get("geometry", block)
@@ -1748,7 +1759,17 @@ class DimGripCommand(Command):
         self.dim = dim
         self.attr = attr
         self.point = (float(point[0]), float(point[1]))
+        #: every definition point this edit sets (``many``: an associative
+        #: dimension whose object moved re-measures both origins at once)
+        self.points = {attr: self.point}
         self._before: dict | None = None
+
+    @classmethod
+    def many(cls, dim, points: dict) -> "DimGripCommand":
+        attr, point = next(iter(points.items()))
+        command = cls(dim, attr, point)
+        command.points = {a: (float(p[0]), float(p[1])) for a, p in points.items()}
+        return command
 
     def do(self, document) -> None:
         d = self.dim
@@ -1783,7 +1804,8 @@ class DimGripCommand(Command):
                 and (int(d.dxf.dimtype) & 7) in (0, 1):
             perp_old = (old_mid.x - old_loc.x) * nx \
                 + (old_mid.y - old_loc.y) * ny
-        setattr(d.dxf, self.attr, (self.point[0], self.point[1], 0.0))
+        for attr, point in self.points.items():
+            setattr(d.dxf, attr, (point[0], point[1], 0.0))
         d.render()
         _stamp_dim_block_byblock(document, d)
         if perp_old is not None:

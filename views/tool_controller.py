@@ -624,6 +624,33 @@ class ToolController(QObject):
         self.changed.emit()
 
     # -- services for editing tools (ToolContext.services) ---------------------
+    def dimassoc_reference(self, point, hit):
+        """The DIMASSOC reference for a dimension point placed with object
+        snap ``hit`` (None for a typed point, a point reached through a
+        viewport, or a snap no object answers)."""
+        from core import dimassoc
+
+        document = self.window.document
+        if hit is None or document is None or hit.via is not None \
+                or self.index is None:
+            return None
+        reach = self.px_to_space(3) or 1e-6
+        x, y = point
+        handles = self.index.crossing((x - reach, y - reach, x + reach, y + reach))
+        candidates = [e for h in handles
+                      if (e := self.index.entity(h)) is not None and e.is_alive]
+        tolerance = max(reach * 1e-3, 1e-9 * max(1.0, abs(x), abs(y)))
+        if hit.kind == "INT":
+            for i, first in enumerate(candidates):
+                for second in candidates[i + 1:]:
+                    ref = dimassoc.intersection_reference(first, second)
+                    p = dimassoc.where(document.doc, ref, near=(x, y))
+                    if p is not None and math.hypot(p[0] - x, p[1] - y) <= tolerance:
+                        return ref
+            return None
+        return dimassoc.reference_at(document, (x, y), hit.kind, candidates,
+                                     tolerance)
+
     def request_selection(self) -> None:
         """A tool asks for objects in the MIDDLE of its flow (WBLOCK: file,
         block name, base point, THEN "Select objects:"). Same phase the
@@ -1458,6 +1485,35 @@ class ToolController(QObject):
             return False
 
     def _execute(self, command) -> None:
+        self._execute_command(command)
+        self._show_reacted(command)
+
+    def _show_reacted(self, command) -> None:
+        """The associative dimensions a command re-measured (its follow-up,
+        core/dimassoc): hide their stale copies and draw them through the
+        overlay, the way a dimension grip edit is shown."""
+        followup = getattr(command, "dimassoc_followup", None)
+        if followup is None:
+            return
+        dims = [d for d in followup.entities if d.is_alive]
+        if not dims:
+            return
+        handles = [d.dxf.handle for d in dims]
+        self._drop_conflicting_stamps(handles)
+        self.window.viewport.hide_handles(handles)
+        self._base_handles -= set(handles)
+        for dim in dims:
+            if dim not in self._pending_render:
+                self._pending_render.append(dim)
+        if self.index is not None:
+            self.index.remove_handles(handles)
+            self.index.add_entities(dims)
+        if self.snap_engine is not None:
+            self.snap_engine.remove_handles(handles)
+            self.snap_engine.add_entities(dims)
+        self._refresh_overlay()
+
+    def _execute_command(self, command) -> None:
         # the drawing changed under the candidates: never cycle stale ones
         self.reset_pick_cycle()
         # asked BEFORE the command runs: an ERASE leaves its entities
@@ -1666,6 +1722,8 @@ class ToolController(QObject):
         everything the command touched are hidden surgically and the restored
         or current entities ride the overlay; the full regen stays coalesced.
         """
+        if command is not None:
+            self._show_reacted(command)
         if command is None or getattr(command, "needs_regen", False):
             # unknown scope: only a regen is right;
             # hide what the undo just destroyed so it vanishes NOW (the regen
@@ -2455,6 +2513,11 @@ class ToolController(QObject):
             # picks an object (TRIM, EXTEND) is not one. It was, and the
             # next direct distance started from a trimmed line's pick.
             self._note_point(point)
+        # the object snap this point came from: a dimension ties itself to
+        # it (core/dimassoc)
+        snapped = self.snap_hit
+        self.tool.last_snap = (snapped if snapped is not None
+                               and (snapped.x, snapped.y) == tuple(point) else None)
         self.tool.on_point(point)
         self.clear_tracking()          # AutoCAD releases the acquired points with the point
         # The step may have made a preview possible (the second origin of a
@@ -3085,6 +3148,7 @@ class ToolController(QObject):
             self.tool.on_point(final)
             self.changed.emit()
             return True
+        self.tool.last_snap = None       # a typed point is tied to nothing
         self.tool.on_point((point.x, point.y))
         self.changed.emit()
         return True

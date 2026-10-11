@@ -82,6 +82,42 @@ def _entity_endpoints(entity, pick: Point, quadrant_rule: bool = False):
     return None
 
 
+def _object_refs(entity, ends) -> dict:
+    """DIMASSOC references for an object picked at "select object": both
+    ends of the line, arc or polyline segment, the circle's two points."""
+    from core import dimassoc as da
+
+    handle = entity.dxf.handle
+    kind = entity.dxftype()
+    if kind in ("LINE", "ARC"):
+        start = da.Reference(da.START, [handle])
+        end = da.Reference(da.OSNAP["END"], [handle], param=1.0)
+        if kind == "ARC":
+            start.param, end.param = (math.radians(a) for a in ocs.angles_wcs(entity))
+        refs = {1: start, 2: end}
+    elif kind == "CIRCLE":
+        c = ocs.center_wcs(entity)
+        refs = {bit: da.Reference(da.OSNAP["QUA"], [handle],
+                                  param=math.atan2(p[1] - c.y, p[0] - c.x))
+                for bit, p in ((1, ends[0]), (2, ends[1]))}
+    elif kind == "LWPOLYLINE":
+        refs = {}
+        for g in range(1, len(entity) + 1):
+            a = da.Reference(da.START, [handle], gsmarker=g)
+            b = da.Reference(da.OSNAP["END"], [handle], gsmarker=g, param=1.0)
+            pa, pb = da.resolve(entity, a), da.resolve(entity, b)
+            if pa is not None and pb is not None and \
+                    math.dist(pa, ends[0]) < 1e-9 and math.dist(pb, ends[1]) < 1e-9:
+                refs = {1: a, 2: b}
+                break
+    else:
+        return {}
+    # only what really sits on the origins found
+    return {bit: ref for bit, ref in refs.items()
+            if (p := da.resolve(entity, ref)) is not None
+            and math.dist(p, ends[bit - 1]) <= 1e-9 * max(1.0, abs(p[0]), abs(p[1]))}
+
+
 class _DimTextMixin:
     """AutoCAD's Mtext/Text/Angle options, shared by every dimension tool."""
 
@@ -166,6 +202,8 @@ class _TwoPointDim(_DimTextMixin, Tool):
     def start(self) -> None:
         self._p1: Point | None = None
         self._p2: Point | None = None
+        #: the objects the two origins were snapped to (core/dimassoc)
+        self._refs: dict = {}
         self._select_mode = False
         self._reset_text_state()
         self.prompt("Specify first extension line origin or <select object>:")
@@ -293,24 +331,38 @@ class _TwoPointDim(_DimTextMixin, Tool):
                     tr("Select a line, arc, circle, or polyline segment."))
                 return
             self._p1, self._p2 = ends
+            self._refs = _object_refs(e, ends)
             self.entity_picker = False   # snap returns for the line location
             self.prompt(self._location_prompt())
             return
         if self._p1 is None:
             self._p1 = point
+            self._tie(1, point)
             self.last_point = point
             self.prompt("Specify second extension line origin:")
         elif self._p2 is None:
             self._p2 = point
+            self._tie(2, point)
             self.last_point = point
             self.prompt(self._location_prompt())
         else:
             point = self._adjust_location(point)
             cmd = self._make(point)
+            cmd.associate = dict(self._refs) or None
             self.ctx.execute(cmd)
             if cmd.dim is not None and (cmd.dim.dxf.dimtype & 15) in (0, 1):
                 set_last_dimension(cmd.dim)
             self.ctx.finish()
+
+    def _tie(self, bit: int, point: Point) -> None:
+        """Remember the object this origin was snapped to (DIMASSOC)."""
+        services = self.ctx.services
+        finder = getattr(services, "dimassoc_reference", None)
+        ref = finder(point, self.last_snap) if finder is not None else None
+        if ref is not None:
+            self._refs[bit] = ref
+        else:
+            self._refs.pop(bit, None)
 
     def preview_segments(self, cursor: Point):
         # Only the phase-1 rubber band; the location phase draws a rich
@@ -464,8 +516,14 @@ class _CurvedDim(_DimTextMixin, Tool):
             self._ent = e
             self.prompt(self._location_prompt())
         else:
+            from core import dimassoc
+
             c = ocs.center_wcs(self._ent)
-            self.ctx.execute(self._make((c.x, c.y), self._ent.dxf.radius, point))
+            cmd = self._make((c.x, c.y), self._ent.dxf.radius, point)
+            # AutoCAD ties a radius or diameter to its circle (bit 2, CEN)
+            cmd.associate = {2: dimassoc.Reference(dimassoc.OSNAP["CEN"],
+                                                   [self._ent.dxf.handle])}
+            self.ctx.execute(cmd)
             self.ctx.finish()
 
     def preview_segments(self, cursor: Point):

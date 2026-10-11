@@ -44,6 +44,8 @@ class Tool:
     ctx: ToolContext
     name: str = "TOOL"
     last_point: Optional[Point] = None         # anchor for @rel / distances
+    #: the object snap (SnapHit) the last clicked point came from, or None
+    last_snap: object = None
     preview_points: list[Point] = field(default_factory=list)
     # Editing tools consume the current selection (noun-verb) or ask for
     # one ("Select objects:") before their point prompts. ClassVar on

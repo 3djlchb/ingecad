@@ -104,7 +104,14 @@ class History:
 
     def execute(self, command: Command) -> None:
         self._gate()
+        # associative dimensions follow their objects in the same undo step
+        from core import dimassoc
+
+        state = dimassoc.before(self.document) if self.document is not None else None
         command.do(self.document)
+        command.dimassoc_followup = dimassoc.react(self.document, state)
+        if command.dimassoc_followup is not None:
+            command.dimassoc_followup.do(self.document)
         self._undo.append(command)
         self._redo.clear()
 
@@ -121,6 +128,9 @@ class History:
             return None
         self._gate()
         command = self._undo.pop()
+        followup = getattr(command, "dimassoc_followup", None)
+        if followup is not None:
+            followup.undo(self.document)
         command.undo(self.document)
         self._redo.append(command)
         return command
@@ -131,6 +141,9 @@ class History:
             return None
         command = self._redo.pop()
         command.do(self.document)
+        followup = getattr(command, "dimassoc_followup", None)
+        if followup is not None:
+            followup.do(self.document)
         self._undo.append(command)
         return command
 
