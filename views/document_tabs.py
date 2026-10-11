@@ -38,6 +38,7 @@ class DocumentSession:
     layout_scenes: dict = field(default_factory=dict)
     active_layout: str = "Model"
     regen_ms: dict = field(default_factory=dict)
+    layout_cameras: dict = field(default_factory=dict)
     camera: Optional[tuple] = None          # (cx, cy, scale)
     view_stack: list = field(default_factory=list)
     #: an open Block Editor stays open in its own tab, as in AutoCAD
@@ -162,10 +163,13 @@ class DocumentTabsMixin:
         session.layout_scenes = self._layout_scenes
         session.active_layout = self._active_layout
         session.regen_ms = self._regen_ms
+        self._remember_tab_view()
+        session.layout_cameras = self._layout_cameras
         view = self.viewport.view
         session.camera = (view.cx, view.cy, view.scale)
         session.view_stack = list(self.viewport._view_stack)
         self._layout_scenes, self._regen_ms = {}, {}
+        self._layout_cameras = {}
         session.block_session = self._block_session
         session.bedit_return_tab = getattr(self, "_bedit_return_tab", None)
         self._drop_block_session()      # the window's editor, not the drawing's
@@ -180,6 +184,7 @@ class DocumentTabsMixin:
             current.undo, current.redo = [], []
             self.history._undo, self.history._redo = [], []
             self._layout_scenes, self._regen_ms = {}, {}
+            self._layout_cameras = {}
             return
         self._stash_session()
         taken = {s.slot for s in self._sessions}
@@ -209,6 +214,7 @@ class DocumentTabsMixin:
         self.history._undo, self.history._redo = session.undo, session.redo
         self._layout_scenes = session.layout_scenes
         self._regen_ms = session.regen_ms
+        self._layout_cameras = session.layout_cameras
         self._active_layout = session.active_layout
         self._block_session = session.block_session
         self._bedit_return_tab = session.bedit_return_tab

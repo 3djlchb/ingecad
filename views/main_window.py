@@ -338,6 +338,11 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         #: change the tessellation without touching the revision, so the
         #: revision alone cannot be trusted as the cache key).
         self._layout_scenes: dict[str, tuple[int, object]] = {}
+        #: layout name -> (cx, cy, scale): the view each Model/Layout tab was
+        #: left with, as AutoCAD keeps one per tab (core/saved_views.py)
+        self._layout_cameras: dict[str, tuple[float, float, float]] = {}
+        #: the layout whose regen should land on that tab's own view
+        self._regen_view_for: str | None = None
         self._layers_dock = None
         self._layers_panel = None
         self._active_vp = None    # MSPACE-activated viewport entity, if any
@@ -2875,6 +2880,7 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         self.document = document
         self._autosave_arm()          # a new drawing, a new countdown
         self._layout_scenes.clear()   # scenes of the previous drawing
+        self._layout_cameras = {}
         self._active_layout = "Model"
         self._deactivate_viewport()
         self._update_space_button()
@@ -3836,9 +3842,66 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
                 self._vp_hide_baked_content()
             else:
                 self._vp_live_stop()
-        if self._regen_zoom:
+        if self._regen_view_for is not None and self._regen_view_for == layout:
+            self._regen_view_for = None
+            self._regen_zoom = False
+            self._show_tab_view(layout)
+        elif self._regen_zoom:
             self._regen_zoom = False
             self.viewport.zoom_extents()
+
+    # -- each tab's own view (core/saved_views.py) -------------------------------
+    def _current_view(self):
+        """((cx, cy, height in units), aspect) of the canvas."""
+        v = self.viewport.view
+        return (v.cx, v.cy, v.height / v.scale), v.width / max(1, v.height)
+
+    def _remember_tab_view(self) -> None:
+        if self._block_session is not None:
+            return                       # the editor's view is the block's
+        v = self.viewport.view
+        self._layout_cameras[self._active_layout] = (v.cx, v.cy, v.scale)
+
+    def _show_tab_view(self, layout: str) -> None:
+        """A tab shows the view it was left with; the first time, the view
+        the drawing was saved with; failing that, its extents."""
+        from core import saved_views
+
+        view = self.viewport.view
+        camera = self._layout_cameras.get(layout)
+        if camera is not None:
+            view.cx, view.cy, view.scale = camera
+            self.viewport.update()
+            return
+        saved = (saved_views.saved_view(self.document.doc, layout)
+                 if self.document is not None else None)
+        aspect = view.width / max(1, view.height)
+        if saved is not None and saved_views.near(
+                saved, self.viewport.scene_bounds(), aspect):
+            view.cx, view.cy = saved[0], saved[1]
+            view.scale = min(max(view.height / saved[2], view.MIN_SCALE),
+                             view.MAX_SCALE)
+            self.viewport.update()
+            return
+        self.viewport.zoom_extents()
+
+    def _store_views_for_save(self) -> None:
+        """Every tab's view into the drawing, where AutoCAD reads it."""
+        from core import saved_views
+
+        if self.document is None:
+            return
+        self._remember_tab_view()
+        height_px = max(1, self.viewport.view.height)
+        aspect = self.viewport.view.width / height_px
+        names = set(self._layout_names())
+        for layout, (cx, cy, scale) in self._layout_cameras.items():
+            if layout in names and scale > 0:
+                try:
+                    saved_views.store_view(self.document.doc, layout,
+                                           (cx, cy, height_px / scale), aspect)
+                except Exception:  # noqa: BLE001 - a view is never worth a failed save
+                    pass
 
     def _register_commands(self) -> None:
         d = self.dispatcher
@@ -5350,6 +5413,7 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
 
         self.tools.cancel()               # drop tool/selection across spaces
         self._deactivate_viewport()       # MSPACE state is per-tab
+        self._remember_tab_view()         # the tab left keeps its view
         # $TILEMODE + the *Paper_Space block dance, so the file reopens on
         # this tab in AutoCAD too (ezdxf does not touch the header itself).
         layout_ops.switch_active(self.document, name)
@@ -5368,9 +5432,9 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
             # made every Model/Layout switch cost seconds on a real plan).
             self.viewport.set_scene(cached[1])
             self.tools.mark_scene_merged()
-            self.viewport.zoom_extents()
+            self._show_tab_view(name)
         else:
-            self._regen_zoom = True
+            self._regen_view_for = name
             if self._regen_worker is not None:
                 self._regen_rerun = True
             else:
@@ -5950,6 +6014,7 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         Returns (engine, warnings)."""
         from PySide6.QtCore import QEventLoop
 
+        self._store_views_for_save()     # opens where it was left (AutoCAD)
         document = self.document
         worker = _SaveWorker(lambda: document.prepare_save(path, version)())
         loop = QEventLoop()
@@ -6109,7 +6174,9 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         # The open built this tab's scene: keep it, so the first switch away
         # and back does not re-tessellate an untouched drawing.
         self._layout_scenes[self._active_layout] = (document.revision, scene)
-        self.viewport.zoom_extents()
+        self._layout_cameras = {}
+        # where its author left it, as AutoCAD opens a drawing
+        self._show_tab_view(self._active_layout)
         self.tools.attach_document(document, flatten=scene.flatten)
         self.refresh_grid_settings()
         self.plugins.document_opened(document)
