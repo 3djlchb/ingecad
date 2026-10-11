@@ -330,8 +330,20 @@ CONTEXT_CLASSES = {
     "DIMENSION": ("ACDB_ALDIMOBJECTCONTEXTDATA_CLASS",
                   "AcDbAlignedDimensionObjectContextData"),
 }
-#: dimension types (dimtype & 7) whose representation body is measured
-_DIM_TYPES_WITH_CONTEXT = (0, 1)
+#: radius and diameter dimensions have context classes of their own, the
+#: common dimension body plus their arc points (LibreDWG's dwg.h, after the
+#: Open Design spec: RADIM 11-31 first arc point; DMDIM 11-31 and 12-32);
+#: no drawing of the corpus carries one, so the writer was checked with ODA
+DIM_CONTEXT_CLASSES = {
+    0: CONTEXT_CLASSES["DIMENSION"],
+    1: CONTEXT_CLASSES["DIMENSION"],
+    3: ("ACDB_DMDIMOBJECTCONTEXTDATA_CLASS",
+        "AcDbDiametricDimensionObjectContextData"),
+    4: ("ACDB_RADIMOBJECTCONTEXTDATA_CLASS",
+        "AcDbRadialDimensionObjectContextData"),
+}
+#: dimension types (dimtype & 7) that can carry scale representations
+_DIM_TYPES_WITH_CONTEXT = tuple(DIM_CONTEXT_CLASSES)
 #: CLASS flags AutoCAD writes for SCALE and every context class (measured)
 _CLASS_FLAGS = 1153
 
@@ -448,18 +460,32 @@ def _body_for(entity) -> list:
                 (40, repr(float(entity.dxf.get("width", 0.0)))),
                 (41, "0.0"), (42, "0.0"), (43, "0.0"), (71, 0)]
     if dxftype == "DIMENSION" and (entity.dimtype & 7) in _DIM_TYPES_WITH_CONTEXT:
+        kind = entity.dimtype & 7
         mid = entity.dxf.get("text_midpoint", (0.0, 0.0, 0.0))
-        defpoint = entity.dxf.get("defpoint", (0.0, 0.0, 0.0))
+
+        def point(code, value):
+            return [(code, repr(float(value[0]))), (code + 10, repr(float(value[1]))),
+                    (code + 20, repr(float(value[2]) if len(value) > 2 else 0.0))]
+
         # the measured body: the *D block of this scale, then the dimension's
-        # text placement, then the aligned subclass with the line's defpoint
-        return [(100, "AcDbDimensionObjectContextData"),
+        # text placement, then the kind's own subclass
+        body = [(100, "AcDbDimensionObjectContextData"),
                 (2, entity.dxf.get("geometry", "")), (293, 0),
                 (10, repr(float(mid[0]))), (20, repr(float(mid[1]))),
                 (294, 1), (140, "0.0"), (298, 0), (291, 0), (70, 1),
-                (292, 0), (71, 0), (280, 31), (295, 0), (296, 0), (297, 0),
-                (100, "AcDbAlignedDimensionObjectContextData"),
-                (11, repr(float(defpoint[0]))), (21, repr(float(defpoint[1]))),
-                (31, repr(float(defpoint[2]) if len(defpoint) > 2 else 0.0))]
+                (292, 0), (71, 0), (280, 31), (295, 0), (296, 0), (297, 0)]
+        zero = (0.0, 0.0, 0.0)
+        if kind in (0, 1):
+            body += [(100, "AcDbAlignedDimensionObjectContextData")] \
+                + point(11, entity.dxf.get("defpoint", zero))
+        elif kind == 4:
+            body += [(100, "AcDbRadialDimensionObjectContextData")] \
+                + point(11, entity.dxf.get("defpoint4", zero))
+        else:
+            body += [(100, "AcDbDiametricDimensionObjectContextData")] \
+                + point(11, entity.dxf.get("defpoint4", zero)) \
+                + point(12, entity.dxf.get("defpoint", zero))
+        return body
     raise ValueError(f"{dxftype} cannot carry scale representations yet")
 
 
@@ -503,8 +529,10 @@ def render_scale_block(dim, scale: Scale) -> dict:
         dim.discard_xdata("ACAD")
         if saved_acad is not None:
             dim.set_xdata("ACAD", saved_acad)
-    return {2: block, 10: float(mid[0]), 20: float(mid[1]),
-            11: float(defpoint[0]), 21: float(defpoint[1])}
+    layout = {2: block, 10: float(mid[0]), 20: float(mid[1])}
+    if (dim.dimtype & 7) in (0, 1):      # the line's defpoint is per scale
+        layout.update({11: float(defpoint[0]), 21: float(defpoint[1])})
+    return layout
 
 
 #: depth of render_scale_block: its own render must not refresh again
@@ -569,7 +597,8 @@ def add_representation(entity, scale: Scale, *, default: bool,
     scale gets its own position. Makes the entity annotative.
     """
     dxftype = entity.dxftype()
-    name, cpp = CONTEXT_CLASSES[dxftype]
+    name, cpp = (DIM_CONTEXT_CLASSES[entity.dimtype & 7]
+                 if dxftype == "DIMENSION" else CONTEXT_CLASSES[dxftype])
     doc = entity.doc
     _register_class(doc, name, cpp)
     if dxftype == "DIMENSION" and not default and layout is None:

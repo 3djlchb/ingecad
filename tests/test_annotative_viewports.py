@@ -40,7 +40,10 @@ def _sheet(dims_kind: str):
         A.set_style_annotative(iso, True)
     dims = []
     for cmd in (actions.dim_linear((-20, -20), (30, -20), (5, -30)),
-                actions.dim_aligned((-20, 0), (20, 20), (-25, 10))):
+                actions.dim_aligned((-20, 0), (20, 20), (-25, 10)),
+                # inside what the 2:1 viewport shows (±30 around 5,-5)
+                actions.dim_radius((15, 2), 6.0, (21, 8)),
+                actions.dim_diameter((-10, 12), 4.0, (-17, 17))):
         _run(document, cmd)
         dims.append(cmd.dim)
     if dims_kind == "after":
@@ -89,7 +92,10 @@ def test_dimension_text_measures_the_same_in_1_1_and_2_1(qapp, dims_kind):
 
 
 def test_each_scale_has_its_own_block_drawn_at_its_size(qapp):
+    """Radius and diameter included -- they could not carry a scale at all
+    ("OBJECTSCALE skipped 2"), and Rafael's part has R10, R26, R3."""
     document, dims = _sheet("born")
+    assert len(dims) == 4
     for dim in dims:
         reps = {r.scale.name: r for r in A.representations(dim)}
         assert set(reps) == {"1:1", "2:1"}
