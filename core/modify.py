@@ -203,6 +203,10 @@ class StretchCommand(Command):
 
     def __init__(self, entities, rects, dx: float, dy: float) -> None:
         self.entities = list(entities)
+        #: every entity it touches is known: the display patches them in
+        #: place instead of a full regeneration (GeoCad Yaguarete had to
+        #: add this; "Regenerando" followed every STRETCH)
+        self.targets = self.entities
         self.rects = [tuple(r) for r in rects]
         self.dx = float(dx)
         self.dy = float(dy)
@@ -253,6 +257,37 @@ class StretchCommand(Command):
 
 def stretch_entities(entities, rects, dx: float, dy: float) -> StretchCommand:
     return StretchCommand(entities, rects, dx, dy)
+
+
+#: past this many objects the drag shows only the rubber band: copying and
+#: tracing them every frame would make the cursor lag
+STRETCH_PREVIEW_LIMIT = 400
+
+
+def stretch_preview(entities, rects, dx: float, dy: float,
+                    tolerance: float) -> list:
+    """What STRETCH would leave, as segments ((x0, y0), (x1, y1)): each
+    entity copied and stretched by the command's own rule, then traced.
+    Nothing in the drawing changes."""
+    from ezdxf import path as ezpath
+
+    segments: list = []
+    if len(entities) > STRETCH_PREVIEW_LIMIT:
+        return segments
+    for entity in entities:
+        if entity.dxftype() in ("DIMENSION", "INSERT", "HATCH", "MTEXT",
+                                "TEXT"):
+            continue       # their own pictures; the rubber band suffices
+        try:
+            copy = entity.copy()
+            if not stretch_entity(copy, rects, dx, dy):
+                continue
+            vertices = list(ezpath.make_path(copy).flattening(tolerance))
+        except Exception:
+            continue
+        segments.extend(((a.x, a.y), (b.x, b.y))
+                        for a, b in zip(vertices, vertices[1:]))
+    return segments
 
 
 # -- BREAK ---------------------------------------------------------------------

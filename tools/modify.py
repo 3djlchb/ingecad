@@ -76,7 +76,30 @@ class StretchTool(Tool):
         self.ctx.finish()
 
     def preview_segments(self, cursor: Point):
-        return [(self._base, cursor)] if self._base else []
+        """The rubber band from the base point, and the objects as the
+        click would leave them, stretched live (AutoCAD drags them)."""
+        if not self._base:
+            return []
+        dx, dy = cursor[0] - self._base[0], cursor[1] - self._base[1]
+        segments = [(self._base, cursor)]
+        if dx or dy:
+            segments.extend(modify.stretch_preview(
+                self._entities, self._rects, dx, dy, self._tolerance()))
+        return segments
+
+    def _tolerance(self) -> float:
+        """Chord tolerance for curves: a thousandth of the selection."""
+        cached = getattr(self, "_tol", None)
+        if cached is None:
+            from ezdxf import bbox
+
+            try:
+                box = bbox.extents(self._entities, fast=True)
+                size = max(box.size.x, box.size.y) if box.has_data else 1.0
+            except Exception:
+                size = 1.0
+            cached = self._tol = max(size * 1e-3, 1e-9)
+        return cached
 
 
 class BreakTool(Tool):
