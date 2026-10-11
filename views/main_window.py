@@ -4953,8 +4953,16 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
                 return
             self.viewport.zoom_extents()
         elif opt in ("W", "WINDOW"):
-            self.viewport.start_zoom_window()
-            self.command_line.echo(tr("Drag a window in the viewport"))
+            if self.tools.tool is None and active_vp is None:
+                # two corners at the prompt, with object snaps, in the Model
+                # tab and on a sheet (#80)
+                self.tools.start_tool("ZOOMWINDOW")
+            else:
+                # transparent 'ZOOM inside a command keeps that command's
+                # prompt; inside a viewport there are no model snaps on
+                # purpose (MSPACE is for navigating): a drag, as before
+                self.viewport.start_zoom_window()
+                self.command_line.echo(tr("Drag a window in the viewport"))
         elif opt in ("P", "PREVIOUS"):
             if not self.viewport.zoom_previous():
                 self.command_line.echo(tr("No previous view"))

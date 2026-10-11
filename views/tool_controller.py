@@ -45,6 +45,7 @@ from tools.leaders import LEADER_TOOL_CLASSES
 from tools.plot_window import PLOT_WINDOW_TOOL_CLASSES   # #52
 from tools.dim_commands import DIMCMD_TOOL_CLASSES   # #39
 from tools.xrefs import XREF_TOOL_CLASSES
+from tools.zoom_window import ZOOM_TOOL_CLASSES   # #80
 from views.apertures import GRIP_PX, PICKBOX_DEFAULT, SNAP_PX
 
 # Overlay entities beyond this schedule an idle merge into the base scene
@@ -168,7 +169,8 @@ ALL_TOOL_CLASSES = {**TOOL_CLASSES, **EDIT_TOOL_CLASSES, **BLOCK_TOOL_CLASSES,
                     **ANNO_TOOL_CLASSES,
                     **BOUNDARY_TOOL_CLASSES, **DONUT_TOOL_CLASSES,
                     **SCALETEXT_TOOL_CLASSES, **DIMCMD_TOOL_CLASSES,
-                    **XREF_TOOL_CLASSES, **PLOT_WINDOW_TOOL_CLASSES}
+                    **XREF_TOOL_CLASSES, **PLOT_WINDOW_TOOL_CLASSES,
+                    **ZOOM_TOOL_CLASSES}
 
 
 #: name -> (owner, windows using it). The registry is process-wide and a
@@ -624,6 +626,15 @@ class ToolController(QObject):
         self.changed.emit()
 
     # -- services for editing tools (ToolContext.services) ---------------------
+    def zoom_to_window(self, rect) -> None:
+        """ZOOM Window's rectangle, in canvas coordinates (the Model tab or
+        a sheet; inside a viewport ZOOM W stays a drag)."""
+        x0, y0, x1, y1 = rect
+        viewport = self.window.viewport
+        viewport.push_view()
+        viewport.view.zoom_extents(x0, y0, x1, y1, margin=0.0)
+        viewport.update()
+
     def dimassoc_reference(self, point, hit):
         """The DIMASSOC reference for a dimension point placed with object
         snap ``hit`` (None for a typed point, a point reached through a
