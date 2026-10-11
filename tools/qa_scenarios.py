@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 
-from modal import drive_modal
+from qa_helpers import annotative_sheet, drive_modal, load_linetypes, red_pixels
 
 CORPUS = "/home/sumaritux/Proyectos/externos/corpus-dwg"
 
@@ -19,14 +19,13 @@ def scenario_linetypes(t):
     """1.1/1.2 Tipos de línea: LINETYPE abre el administrador, Cargar...
     trae ACAD_ISO04W100, Actual la deja puesta y la línea nueva sale con
     trazos (Rafael no pudo poner ejes en la revisión 7)."""
-    from test_linetype_manager_dialog import _load
     from views.linetype_dialog import LinetypeManagerDialog
 
     win = t.new_window()
     errors = []
 
     def inside(dialog):
-        _load(dialog, "ACAD_ISO04W100")
+        load_linetypes(dialog, "ACAD_ISO04W100")
         dialog.current_button.click()
         t.shot("manager", "LINETYPE: el administrador con ACAD_ISO04W100 cargado y actual",
                widget=dialog)
@@ -225,9 +224,7 @@ def _annotative_sheet(t):
     import tempfile
     from pathlib import Path
 
-    from test_annotative_viewports import _sheet
-
-    document, _dims = _sheet("born")
+    document, _dims = annotative_sheet()
     path = Path(tempfile.mkdtemp(dir=Path.home() / ".cache")) / "anotativo.dxf"
     document.doc.saveas(path)
     return path
@@ -242,9 +239,7 @@ def scenario_annotative_viewports(t):
     t.settle()
     t.frame(0, 30, 300, 170)
     t.shot("sheet", "Lámina con ventana 1:1 (izq.) y 2:1 (der.): textos de cota del mismo tamaño")
-    from test_annotative_viewports import _red_pixels
-
-    a, b = _red_pixels(win.document)
+    a, b = red_pixels(win.document)
     t.check(a > 200 and abs(b / a - 1) < 0.12, "texto rojo igual en las dos ventanas",
             f"{a} / {b}")
 
@@ -461,3 +456,53 @@ def scenario_dyn_tooltip_left(t):
             "el cursor llegó al lienzo con DIN encendido", win.tools._cursor)
     t.shot("left_edge", "Cursor pegado al borde izquierdo: el globo con la distancia sigue visible")
     t.esc()
+
+
+def scenario_saved_view(t):
+    """Abrir un plano en la vista que guardó su autor (AutoCAD), no en la
+    extensión: Yanaquihua tiene bloques en coordenadas UTM lejanas."""
+    win = t.new_window()
+    t.open(f"{CORPUS}/0306_E-1 Y P-2 CIMENTACION FINAL YANAQUIHUA.dwg")
+    v = win.viewport.view
+    t.check(abs(v.cx - 2825.50) < 0.01 and abs(v.height / v.scale - 1.825) < 0.01,
+            "abre en la vista guardada (centro 2825.5, alto 1.83)",
+            (round(v.cx, 2), round(v.cy, 2), round(v.height / v.scale, 3)))
+    t.shot("opened", "El plano del colega abre en el detalle donde lo dejó")
+
+
+def scenario_select_all(t):
+    """MOVE, ALL, Enter: las opciones tecleadas en «Designe objetos»."""
+    win = t.new_window()
+    for start, end in (("0,0", "10,0"), ("0,5", "10,5")):
+        for text in ("LINE", start, end, ""):
+            t.type(text)
+    for text in ("MOVE", "ALL"):
+        t.type(text)
+    t.check(any("2 encontrado" in l or "2 found" in l for l in t.last_lines(4)),
+            "ALL encuentra los 2 objetos", t.last_lines(3))
+    for text in ("", "0,0", "0,20"):
+        t.type(text)
+    ys = sorted(l.dxf.start.y for l in win.document.modelspace().query("LINE"))
+    t.check(ys == [20.0, 25.0], "las dos líneas se movieron", ys)
+    t.frame(-2, -2, 12, 27)
+    t.shot("moved", "MOVE con ALL: las dos líneas subieron 20")
+
+
+def scenario_sandbox_disks(t):
+    """6.4 Dentro del Flatpak se ven los discos externos por su ruta real
+    (/media, /run/media): un xref en un USB no queda como /run/flatpak/doc."""
+    import os
+
+    if not os.path.exists("/.flatpak-info"):
+        t.note("Fuera del Flatpak: no aplica.")
+        return
+    info = open("/.flatpak-info").read()
+    t.check("/media" in info and "/run/media" in info,
+            "el sandbox declara /media y /run/media",
+            [l for l in info.splitlines() if "filesystems" in l])
+    seen = [p for p in ("/media", "/run/media") if os.path.isdir(p)]
+    # Ubuntu mounts disks under /media, Fedora/Arch under /run/media: the
+    # host has one of them, and the sandbox shows it
+    t.check(bool(seen), "los discos externos son visibles dentro del sandbox", seen)
+    if seen:
+        t.note("Contenido de " + seen[0] + ": " + ", ".join(os.listdir(seen[0])[:10]))

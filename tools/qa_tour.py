@@ -23,9 +23,15 @@ import time
 import traceback
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+import os
+
+REPO = Path(__file__).resolve().parents[1]
+#: the code under test: the repository, or a packaged copy (the Flatpak's
+#: /app/ingecad) named by INGECAD_ROOT -- the tests' helpers still come
+#: from the repository
+ROOT = Path(os.environ.get("INGECAD_ROOT", REPO))
+sys.path.insert(0, str(REPO / "tests"))
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "tests"))
 
 
 class Tour:
@@ -53,11 +59,12 @@ class Tour:
         return win
 
     def focus(self, win) -> None:
-        from PySide6.QtTest import QTest
-
         win.activateWindow()
         win.raise_()
-        QTest.qWaitForWindowActive(win, 3000)
+        end = time.monotonic() + 3
+        while not win.isActiveWindow() and time.monotonic() < end:
+            self.app.processEvents()
+            time.sleep(0.01)
         self.win = win
 
     def close_all(self) -> None:
@@ -91,31 +98,56 @@ class Tour:
         self.wait(120)
 
     # -- the user's hands --------------------------------------------------------
+    # Keys go to the widget as Qt key events, and shortcuts to the action
+    # or shortcut of the window that holds them -- what Qt's shortcut map
+    # does. No QtTest: the Flatpak does not ship it, and the tour runs there.
+    def _key(self, widget, key, text="", modifiers=None) -> None:
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtWidgets import QApplication
+
+        mods = modifiers if modifiers is not None else Qt.NoModifier
+        for kind in (QEvent.KeyPress, QEvent.KeyRelease):
+            QApplication.sendEvent(widget, QKeyEvent(kind, key, mods, text))
+
     def type(self, text: str) -> None:
         """Type on the command line and press Enter."""
         from PySide6.QtCore import Qt
-        from PySide6.QtTest import QTest
 
         edit = self.win.command_line.input
         edit.setFocus()
-        if text:
-            QTest.keyClicks(edit, text)
-        QTest.keyClick(edit, Qt.Key_Return)
+        for ch in text:
+            key = (Qt.Key_A + ord(ch.upper()) - ord("A")) if ch.isascii() and ch.isalpha() else 0
+            self._key(edit, Qt.Key(key) if key else Qt.Key_unknown, ch)
+        self._key(edit, Qt.Key_Return, "\r")
         self.wait(60)
 
     def keys(self, sequence: str) -> None:
-        from PySide6.QtGui import QKeySequence
-        from PySide6.QtTest import QTest
+        """A shortcut (Ctrl+Z, Ctrl+Tab...): its window action or shortcut."""
+        from PySide6.QtGui import QAction, QKeySequence, QShortcut
 
-        self.win.viewport.setFocus()
-        QTest.keySequence(self.win.viewport, QKeySequence(sequence))
+        wanted = QKeySequence(sequence)
+        win = self.win
+        win.viewport.setFocus()
+        for action in win.findChildren(QAction):
+            if action.isEnabled() and any(k.matches(wanted) == QKeySequence.ExactMatch
+                                          for k in action.shortcuts()):
+                action.trigger()
+                self.wait(60)
+                return
+        for shortcut in win.findChildren(QShortcut):
+            if shortcut.isEnabled() and shortcut.key().matches(wanted) == QKeySequence.ExactMatch:
+                shortcut.activated.emit()
+                self.wait(60)
+                return
+        combo = wanted[0]
+        self._key(win.viewport, combo.key(), "", combo.keyboardModifiers())
         self.wait(60)
 
     def esc(self) -> None:
         from PySide6.QtCore import Qt
-        from PySide6.QtTest import QTest
 
-        QTest.keyClick(self.win.viewport, Qt.Key_Escape)
+        self._key(self.win.viewport, Qt.Key_Escape)
         self.wait(40)
 
     def _pos(self, wx, wy):
@@ -139,21 +171,31 @@ class Tour:
         QApplication.sendEvent(vp, event)
         self.wait(40)
 
+    def _button(self, kind, wx, wy, buttons, mods=None) -> None:
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
+
+        vp = self.win.viewport
+        local = QPointF(self._pos(wx, wy))
+        QApplication.sendEvent(vp, QMouseEvent(
+            kind, local, QPointF(vp.mapToGlobal(local)), Qt.LeftButton, buttons,
+            mods if mods is not None else Qt.NoModifier))
+
     def click(self, wx: float, wy: float, *, shift=False) -> None:
-        from PySide6.QtCore import Qt
-        from PySide6.QtTest import QTest
+        from PySide6.QtCore import QEvent, Qt
 
         self.move(wx, wy)
         mods = Qt.ShiftModifier if shift else Qt.NoModifier
-        QTest.mouseClick(self.win.viewport, Qt.LeftButton, mods, self._pos(wx, wy))
+        self._button(QEvent.MouseButtonPress, wx, wy, Qt.LeftButton, mods)
+        self._button(QEvent.MouseButtonRelease, wx, wy, Qt.NoButton, mods)
         self.wait(60)
 
     def drag(self, a, b) -> None:
-        from PySide6.QtCore import Qt
-        from PySide6.QtTest import QTest
+        from PySide6.QtCore import QEvent, Qt
 
         vp = self.win.viewport
-        QTest.mousePress(vp, Qt.LeftButton, Qt.NoModifier, self._pos(*a))
+        self._button(QEvent.MouseButtonPress, a[0], a[1], Qt.LeftButton)
         for k in range(1, 9):
             x = a[0] + (b[0] - a[0]) * k / 8
             y = a[1] + (b[1] - a[1]) * k / 8
@@ -166,7 +208,7 @@ class Tour:
                 QEvent.MouseMove, local, QPointF(vp.mapToGlobal(local)),
                 Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
             self.wait(15)
-        QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, self._pos(*b))
+        self._button(QEvent.MouseButtonRelease, b[0], b[1], Qt.NoButton)
         self.wait(80)
 
     def snaps(self, *kinds) -> None:
@@ -312,5 +354,5 @@ def run(names: list[str], out: Path) -> int:
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.path.insert(1, str(Path(__file__).resolve().parent))
     sys.exit(run(sys.argv[2:], Path(sys.argv[1])))
