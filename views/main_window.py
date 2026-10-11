@@ -5858,7 +5858,7 @@ class MainWindow(QMainWindow):
             timer = getattr(tools, "_merge_timer", None)
             if timer is not None:
                 timer.stop()
-            for attr in ("_warmers", "_ghost_workers"):
+            for attr in ("_warmers", "_ghost_workers", "_clip_writers"):
                 for w in list(getattr(tools, attr, ()) or ()):
                     w.wait()
 

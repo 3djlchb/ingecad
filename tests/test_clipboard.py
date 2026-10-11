@@ -217,3 +217,91 @@ def test_copy_in_one_drawing_and_paste_in_another_keeps_what_it_needs(qapp, tmp_
     geometry = pasted["DIMENSION"].dxf.geometry
     assert geometry != "*D1" and len(back.blocks.get(geometry)) > 0
     assert not back.audit().has_errors
+
+
+def test_copy_in_one_window_and_paste_in_another(qapp, tmp_path):
+    # #75 again, with 0.6.6 on Windows: two drawings open = two IngeCAD
+    # windows, each its own program, and Ctrl+V in the second one said
+    # "Clipboard is empty." The copy now rides the system clipboard as a
+    # DXF. Two windows here never share their in-memory clipboards, as two
+    # processes would not.
+    from PySide6.QtGui import QKeySequence
+    from PySide6.QtTest import QTest
+
+    from views.main_window import MainWindow
+
+    mine = ezdxf.new("R2018")
+    mine.modelspace().add_circle((0, 0), 1)
+    mine.saveas(tmp_path / "mio.dxf")
+    first, second = MainWindow(), MainWindow()
+    for win in (first, second):
+        win.maybe_save_changes = lambda: True
+        win.show()
+    try:
+        _open(qapp, first, _colleague(tmp_path))
+        _open(qapp, second, tmp_path / "mio.dxf")
+        first.activateWindow()
+        QTest.qWaitForWindowActive(first, 5000)
+        first.tools.select_all()
+        first.viewport.setFocus()
+        QTest.keySequence(first.viewport, QKeySequence("Ctrl+C"))
+        qapp.processEvents()
+        assert second.tools._clipboard is None, "the windows share memory"
+        from views import clipboard
+        import time
+        t0 = time.monotonic()
+        while (clipboard.current_id() != first.tools._clip_id
+               and time.monotonic() - t0 < 10):
+            qapp.processEvents()
+        assert clipboard.current_id() == first.tools._clip_id, \
+            "the copy never reached the system clipboard"
+        second.activateWindow()
+        QTest.qWaitForWindowActive(second, 5000)
+        second.viewport.setFocus()
+        QTest.keySequence(second.viewport, QKeySequence("Ctrl+V"))
+        qapp.processEvents()
+        assert second.tools.tool is not None and second.tools.tool.name == "PASTECLIP", \
+            "Clipboard is empty."
+        second.tools.on_text("100,0")
+        qapp.processEvents()
+        out = tmp_path / "pegado.dxf"
+        second.document.save_as(out)
+        # pasted again from memory in the window that copied
+        first.activateWindow()
+        QTest.qWaitForWindowActive(first, 5000)
+        first.viewport.setFocus()
+        QTest.keySequence(first.viewport, QKeySequence("Ctrl+V"))
+        qapp.processEvents()
+        assert first.tools.tool is not None and first.tools.tool.name == "PASTECLIP"
+        assert first.tools.clipboard_data()[0] is first.tools._clipboard[0]
+        first.tools.cancel()
+    finally:
+        for win in (first, second):
+            win.document.dirty = False
+            win.close()
+    back = ezdxf.readfile(out)
+    kinds = sorted(e.dxftype() for e in back.modelspace())
+    assert kinds == ["CIRCLE", "DIMENSION", "INSERT", "TEXT"]
+    assert "MUROS" in back.layers and "ROMANS" in back.styles
+    assert len(back.blocks.get("PUERTA")) == 2
+    pasted = {e.dxftype(): e for e in back.modelspace() if e.dxftype() != "CIRCLE"}
+    ins, text = pasted["INSERT"].dxf.insert, pasted["TEXT"].dxf.insert
+    assert (ins.x - text.x, ins.y - text.y) == pytest.approx((5, 5))
+    assert 100 < text.x < 101
+    assert len(back.blocks.get(pasted["DIMENSION"].dxf.geometry)) > 0
+    assert not back.audit().has_errors
+
+
+def test_a_cut_is_a_snapshot_on_the_system_clipboard(qapp):
+    """Ctrl+X erases the originals; the other window still gets them."""
+    from views import clipboard
+
+    document = Document.new()
+    line = document.modelspace().add_line((0, 0), (3, 4), dxfattribs={"layer": "0"})
+    clip_id = clipboard.publish([line], (1.0, 2.0))
+    assert clip_id and clipboard.current_id() == clip_id
+    document.modelspace().delete_entity(line)
+    sources, base = clipboard.read_dxf(clipboard.current_dxf())
+    assert base == (1.0, 2.0)
+    assert [e.dxftype() for e in sources] == ["LINE"]
+    assert sources[0].dxf.end == (3, 4, 0)

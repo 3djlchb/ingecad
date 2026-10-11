@@ -412,6 +412,9 @@ class ToolController(QObject):
         self._base_handles: set[str] = set()
         self._clipboard = None   # (list[entity copies], base point) for paste
         self._clipboard_src: list = []   # source handles aligned w/ clipboard
+        self._clip_id: Optional[str] = None   # this window's copy on the system clipboard
+        self._foreign_clip: Optional[tuple] = None   # (id, (sources, base)) read back
+        self._clip_writers: set = set()   # ClipWriter threads in flight
         self._ghost_on = False   # a drag ghost (MOVE/COPY/PASTE) is showing
         # Ghost tessellation is expensive on big selections: cache it per
         # entity-list identity and build it OFF the UI thread.
@@ -842,20 +845,77 @@ class ToolController(QObject):
         # source handles (aligned with the clipboard) let paste register its
         # copies in the pick index by translating the sources' cached rows
         self._clipboard_src = [e.dxf.handle for e in entities]
+        # and on the system clipboard, for the other IngeCAD windows -- each
+        # one its own process (#75)
+        self._publish_clipboard(entities, base)
         if cut:
             self._execute(actions.EraseCommand(entities))
             self.clear_selection()
         return True
 
+    def _publish_clipboard(self, entities, base) -> None:
+        from core import gc_guard
+        from views import clipboard
+
+        built = clipboard.build(entities, base)
+        self._clip_id = built[0] if built is not None else None
+        if built is None:
+            return
+        writer = clipboard.ClipWriter(*built)
+        writer.done.connect(self._on_clip_written)
+        self._clip_writers.add(writer)
+        gc_guard.start(writer)
+
+    def _on_clip_written(self, clip_id, data) -> None:
+        from views import clipboard
+
+        worker = self.sender()
+        if worker in self._clip_writers:
+            worker.wait()   # thread has emitted; joins immediately
+            self._clip_writers.discard(worker)
+        if data and clip_id == self._clip_id:   # not overtaken by a newer copy
+            clipboard.put(clip_id, data)
+
+    def _system_clipboard(self) -> Optional[tuple]:
+        """(sources, base) of an IngeCAD copy made in ANOTHER window, read
+        from the system clipboard's DXF; None when the latest copy is this
+        window's own (pasted from memory) or not IngeCAD's at all."""
+        from views import clipboard
+
+        if self._clip_writers:      # this window's copy is still being written
+            return None
+        clip_id = clipboard.current_id()
+        if clip_id is None or clip_id == self._clip_id:
+            return None
+        if self._foreign_clip is not None and self._foreign_clip[0] == clip_id:
+            return self._foreign_clip[1]
+        data = clipboard.current_dxf()
+        try:
+            sources, base = clipboard.read_dxf(data) if data else ([], None)
+        except Exception:
+            sources = []
+        if not sources:
+            return None
+        self._foreign_clip = (clip_id, (sources, base))
+        return self._foreign_clip[1]
+
     def clipboard_data(self):
+        other = self._system_clipboard()
+        if other is not None:
+            return other
         return self._clipboard if self._clipboard else (None, None)
 
     def clipboard_originals(self) -> list | None:
+        other = self._system_clipboard()
+        if other is not None:
+            # entities of the clipboard drawing: a paste loads them with
+            # everything they name
+            return list(other[0])
         return getattr(self, "_clipboard_originals", None) if self._clipboard else None
 
     def paste(self) -> None:
         """Ctrl+V: place the clipboard entities from a picked point."""
-        if not self._clipboard:
+        if not self._clipboard and self._system_clipboard() is None:
             self.window.command_line.echo(tr("Clipboard is empty."))
             return
         self.start_tool("PASTECLIP")
