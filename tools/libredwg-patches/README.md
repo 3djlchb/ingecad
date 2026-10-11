@@ -3,6 +3,41 @@
 IngeCAD embeds LibreDWG's `dwg2dxf`/`dxf2dwg` as satellite converters
 (`vendor/libredwg/bin`, gitignored).
 
+## 2026-10-10: associative dimensions survive open and Save as DWG
+
+Appended to `current/ingecad-vendor-0.14.8597.patch`. IngeCAD 0.6.7 ties
+dimensions to their objects (DIMASSOC = 2, `core/dimassoc.py`); 10 of 40
+corpus plans converted by ODA carry DIMASSOC objects (Yanaquihua: 73).
+
+- **DIMASSOC was UNSTABLE**, so `dwg2dxf` wrote none: a colleague's
+  associative dimensions opened untied. Made stable.
+- **The refs were indexed by bit.** They follow one another: one per set
+  bit of `associativity`, each followed by its last-point companion when
+  `has_lastpt_ref` (a perpendicular's "from" point, no bit of its own).
+  With a companion every later ref was lost -- decoding too: a dimension
+  with two perpendiculars has 5 refs for its 2 bits. `dwg2.spec` now reads
+  and writes them in sequence.
+- **DXF layout as ODA writes it:** the dimension's 330 first; no 74 count
+  before the 332s (a DWG count, like the 331s').
+- **`in_dxf` `add_DIMASSOC`** rewritten for the sequential layout (6 refs,
+  92/301/302, the spec's handle codes), and the 330 in `AcDbDimAssoc`
+  imported as `dimensionobj`: left to the generic search it was lost, and
+  ODA drops a DIMASSOC that names no dimension.
+
+ODA as the judge: `dwg2dxf` on the 18 corpus plans with DIMASSOC gives 217
+of 217 objects identical, tag by tag, to ODA's DXF. A sheet saved by
+IngeCAD reads back in ODA with its ties identical to ODA's own conversion,
+and Yanaquihua opened in IngeCAD and saved as DWG reads back in ODA with
+all 73 identical. Through IngeCAD's save and open the dimension still
+follows its line. `make check` 270/0; `dwg_fuzz` 500 seeds identical.
+Read sweep (200 corpus drawings, old vs new `dwg2dxf`, IngeCAD's reader):
+200/200 the same entities and audit errors, and now 5305 DIMASSOC in 102
+of them (none before). Write sweep (120 drawings through IngeCAD's save,
+ODA as judge): no drawing worse, and 10 that ODA rejected now read --
+the old `dxf2dwg` mis-wrote the DIMASSOC the new reader brings, so both
+halves of this patch go together. Upstream: local branch `dimassoc-stable`
+in `~/Proyectos/externos/libredwg` (not pushed yet).
+
 ## 2026-10-10: annotative scales and viewports survive Save as DWG
 
 Appended to `current/ingecad-vendor-0.14.8597.patch`. Found making Rafael's

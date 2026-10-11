@@ -219,3 +219,33 @@ def test_a_colleagues_polyline_segment_and_perpendicular_follow():
     # the perpendicular from the polyline's first segment to the moved line
     assert (perp.dxf.defpoint3.x, perp.dxf.defpoint3.y) == pytest.approx((5, 9))
     assert perp.get_measurement() == pytest.approx(9)
+
+
+def _have_libredwg() -> bool:
+    from formats.dwg_bridge import find_dxf2dwg
+
+    return find_dxf2dwg() is not None
+
+
+@pytest.mark.skipif(not _have_libredwg(), reason="LibreDWG not available")
+def test_the_tie_survives_save_as_dwg_and_reopen(win, tmp_path):
+    """LibreDWG kept DIMASSOC unstable: dwg2dxf never wrote one and dxf2dwg
+    could not import one, so a colleague's ties were gone on opening and
+    IngeCAD's on saving. The vendor patch of 2026-10-10 carries them."""
+    from core.commands import History
+    from formats.dwg_bridge import load_dwg
+
+    t = win.tools
+    t._execute(actions.add_line((0, 0), (40, 0)))
+    _dimlinear_on_ends(win, (0, 0), (40, 0), (20, -8))
+    path = tmp_path / "assoc.dwg"
+    _engine, warnings = win.document.save_as(path)
+    again = load_dwg(path)
+    pairs = da.associations(again)
+    assert len(pairs) == 1, "the tie did not survive the DWG"
+    dim, assoc = pairs[0]
+    assert [(bit, ref.osnap) for bit, ref in assoc.references()] == [
+        (1, da.START), (2, da.OSNAP["END"])]
+    line = again.doc.modelspace().query("LINE")[0]
+    History(again).execute(stretch_entities([line], [(35, -1, 45, 1)], 10, 0))
+    assert dim.get_measurement() == pytest.approx(50)
