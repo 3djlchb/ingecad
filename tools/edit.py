@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 
-from core import actions, editmath, ocs, polyoffset
+from core import actions, editmath, modify, ocs, polyoffset
 from core.i18n import tr
 from tools.base import Point, Tool
 
@@ -1014,20 +1014,25 @@ class FilletTool(Tool):
         if self._await == "polyline":
             self._fillet_polyline(entity)
             return
-        if entity is None or entity.dxftype() not in ("LINE", "ARC", "CIRCLE"):
-            self.ctx.echo(tr("FILLET joins lines, arcs and circles."))
+        if entity is None or entity.dxftype() not in (
+                "LINE", "ARC", "CIRCLE", "LWPOLYLINE"):
+            self.ctx.echo(tr("FILLET joins lines, arcs, circles and "
+                             "polyline segments."))
             return
         if self._first is None:
             self._first = entity
             self._first_pick = point
             self.prompt("Select second object or shift-select to apply corner:")
             return
-        if entity is self._first:
+        if entity is self._first and entity.dxftype() != "LWPOLYLINE":
             self.ctx.echo(tr("Pick a different object."))
             return
         # Shift on the second pick: a sharp corner, radius 0 this once
         radius = 0.0 if getattr(self, "shift", False) else type(self).radius
-        if "LINE" == entity.dxftype() == self._first.dxftype():
+        kinds = {entity.dxftype(), self._first.dxftype()}
+        if "LWPOLYLINE" in kinds:
+            done = self._fillet_segments(entity, point, radius)
+        elif "LINE" == entity.dxftype() == self._first.dxftype():
             done = self._fillet_lines(entity, point, radius)
         else:
             done = self._fillet_curves(entity, point, radius)
@@ -1071,28 +1076,32 @@ class FilletTool(Tool):
                       lambda msp: inherit_style(
                           msp.add_arc(center, r, a0, a1), source))
             return True
-        if radius == 0:
-            result = editmath.fillet_corner(s1, s2)
-            if result is None:
-                self.ctx.echo(tr("Lines are parallel."))
-                return False
-            n1, n2 = result
+        # Each line keeps the side it was picked on, measured from where
+        # they cross -- on crossing lines the end farther from the corner
+        # is often the other side (GeoCad Yaguarete had to patch it).
+        result = editmath.sided_fillet(s1, self._first_pick, s2, point, radius)
+        if result == "parallel":
+            self.ctx.echo(tr("Lines are parallel."))
+            return False
+        if result == "too large":
+            self.ctx.echo(tr("Radius does not fit."))
+            return False
+        _corner, t1, t2, center, far1, far2, _sweep = result
+        def kept(seg, far, tangent):
+            # the line keeps its own direction: start stays the start
+            if math.dist((seg[0], seg[1]), far) < 1e-12:
+                return (far[0], far[1], tangent[0], tangent[1])
+            return (tangent[0], tangent[1], far[0], far[1])
+
+        n1, n2 = kept(s1, far1, t1), kept(s2, far2, t2)
+        if center is None:
             arc = None
         else:
-            result = editmath.fillet_arc(s1, s2, radius)
-            if result is None:
-                self.ctx.echo(tr("Radius does not fit."))
-                return False
-            center, r, a0, a1, t1, t2 = result
-            corner = editmath.line_line_intersection(s1, s2, infinite2=True)[1]
-
-            def far_piece(seg, tangent):
-                d_start = math.hypot(seg[0] - corner[0], seg[1] - corner[1])
-                d_end = math.hypot(seg[2] - corner[0], seg[3] - corner[1])
-                far = (seg[0], seg[1]) if d_start >= d_end else (seg[2], seg[3])
-                return (far[0], far[1], tangent[0], tangent[1])
-
-            n1, n2 = far_piece(s1, t1), far_piece(s2, t2)
+            r = math.dist(center, t1)
+            a0 = math.degrees(math.atan2(t1[1] - center[1], t1[0] - center[0]))
+            a1 = math.degrees(math.atan2(t2[1] - center[1], t2[0] - center[0]))
+            if (a1 - a0) % 360.0 > 180.0:       # the short way round
+                a0, a1 = a1, a0
             arc = (lambda msp, c=center, rr=r, s=a0, e=a1:
                    inherit_style(msp.add_arc(c, rr, s, e), source))
         # The two trimmed pieces keep their own object's properties; the
@@ -1104,6 +1113,43 @@ class FilletTool(Tool):
                    lambda msp, p=n2: inherit_style(
                       msp.add_line((p[0], p[1]), (p[2], p[3])), entity)],
                   arc)
+        return True
+
+    _SEGMENT_REASONS = {
+        "arc": "FILLET takes the straight segments of a polyline.",
+        "tilted": "The polyline is not in the drawing's plane.",
+        "not adjacent": "The segments must be adjacent or separated by "
+                        "one segment.",
+        "not an end": "A line joins a polyline at one of its end segments.",
+        "closed": "A line cannot join a closed polyline.",
+        "parallel": "Lines are parallel.",
+        "too large": "Radius is too large.",
+        "short": "The polyline has no segment there.",
+        "nothing": "Radius is too large.",
+    }
+
+    def _fillet_segments(self, entity, point, radius) -> bool:
+        """A polyline segment in the pair (FILLET, p. 801)."""
+        from core import trimmode
+
+        if entity.dxftype() == self._first.dxftype() == "LWPOLYLINE" \
+                and entity is not self._first and (
+                    entity.closed or self._first.closed):
+            self.ctx.echo(tr(self._SEGMENT_REASONS["closed"]))
+            return False
+        if not {entity.dxftype(), self._first.dxftype()} <= {
+                "LINE", "LWPOLYLINE"}:
+            self.ctx.echo(tr("FILLET joins a polyline segment with a line "
+                             "or another polyline segment."))
+            return False
+        command, reason = modify.fillet_with_polylines(
+            self._first, self._first_pick, entity, point, radius,
+            trim=trimmode.trimmode())
+        if command is None:
+            self.ctx.echo(tr(self._SEGMENT_REASONS.get(
+                reason, "Radius is too large.")))
+            return False
+        self.ctx.execute(command)
         return True
 
     def _fillet_curves(self, entity, pick, radius) -> bool:

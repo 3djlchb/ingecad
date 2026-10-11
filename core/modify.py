@@ -518,6 +518,194 @@ def _dedupe(rows) -> list:
     return out
 
 
+# -- FILLET with polyline segments ---------------------------------------------
+
+def _arc_bulge(t1: Point, t2: Point, center: Point, sweep: float) -> float:
+    """The bulge running T1 -> T2 round ``center`` (a fillet: < 180)."""
+    if sweep <= 0.0:
+        return 0.0
+    cross = ((t1[0] - center[0]) * (t2[1] - center[1])
+             - (t1[1] - center[1]) * (t2[0] - center[0]))
+    return math.copysign(math.tan(sweep / 4.0), cross)
+
+
+def polyline_pick(entity, pick: Point):
+    """(segment index, (x0, y0, x1, y1)) of the straight segment picked on
+    a flat LWPOLYLINE, or the reason it cannot be filleted."""
+    if not ocs.is_planar(entity) or entity.dxf.get("extrusion", (0, 0, 1))[2] < 0:
+        return "tilted"
+    rows = [(p[0], p[1], p[4]) for p in entity.get_points("xyseb")]
+    spans = _polyline_spans([(x, y, 0, 0, b) for x, y, b in rows],
+                            bool(entity.closed))
+    if not spans:
+        return "short"
+    _d, index, _u, _foot = _polyline_position(spans, pick)
+    a, b, bulge = spans[index]
+    if abs(bulge) > 1e-12:
+        return "arc"
+    return index, (a[0], a[1], b[0], b[1])
+
+
+def _rows(entity) -> list:
+    return [(p[0], p[1], p[4]) for p in entity.get_points("xyseb")]
+
+
+def _ending_at(entity, index: int, pick: Point):
+    """The polyline's rows turned so the picked END segment is the last
+    one, kept toward the rest of the polyline. None: not an end segment."""
+    rows = _rows(entity)
+    last = len(rows) - 2
+    if len(rows) == 2:
+        # a single segment: the part picked stays, the other end is cut
+        a, b = rows[0][:2], rows[1][:2]
+        if math.dist(pick, b) < math.dist(pick, a):
+            rows = _reverse_rows(rows)       # the picked end is kept: [-2]
+        return rows
+    if index == last:
+        return rows
+    if index == 0:
+        return _reverse_rows(rows)
+    return None
+
+
+def _poly_factory(base, rows, closed: bool):
+    def build(msp):
+        clone = base.copy()
+        clone.set_points([(x, y, 0.0, 0.0, b) for x, y, b in _dedupe_xyb(rows)],
+                         format="xyseb")
+        clone.closed = closed
+        msp.add_entity(clone)
+        return clone
+    return build
+
+
+def _dedupe_xyb(rows) -> list:
+    out = []
+    for x, y, b in rows:
+        if out and math.dist(out[-1][:2], (x, y)) < 1e-9:
+            out[-1] = (out[-1][0], out[-1][1], b)
+            continue
+        out.append((x, y, b))
+    return out
+
+
+def fillet_with_polylines(first, pick1, second, pick2, radius: float,
+                          trim: bool = True):
+    """FILLET where a picked object is a polyline's straight segment, as
+    AutoCAD does it (FILLET, p. 801):
+
+    * two segments of ONE polyline, adjacent or with one segment between
+      them (which goes): the corner is rounded inside the polyline;
+    * a line and a polyline's END segment, or two polylines by their end
+      segments: they come out joined in one polyline with the arc.
+
+    Returns ``(command, "")`` or ``(None, reason)``. GeoCad Yaguarete had
+    to add all of it: everything that comes from QGIS is a polyline.
+    """
+    from core.actions import ReplaceEntitiesCommand
+    from core.editmath import sided_fillet
+
+    def seg_of(entity, pick):
+        if entity.dxftype() == "LINE":
+            s, e = entity.dxf.start, entity.dxf.end
+            return None, (s.x, s.y, e.x, e.y)
+        found = polyline_pick(entity, pick)
+        if isinstance(found, str):
+            return found, None
+        return found
+
+    i1, s1 = seg_of(first, pick1)
+    i2, s2 = seg_of(second, pick2)
+    for reason in (i1, i2):
+        if isinstance(reason, str):
+            return None, reason
+
+    def arc_only(result):
+        _c, t1, t2, center, _f1, _f2, _sw = result
+        if center is None:
+            return None, "nothing"
+        r = math.dist(center, t1)
+        a0 = math.degrees(math.atan2(t1[1] - center[1], t1[0] - center[0]))
+        a1 = math.degrees(math.atan2(t2[1] - center[1], t2[0] - center[0]))
+        if (a1 - a0) % 360.0 > 180.0:
+            a0, a1 = a1, a0
+        source = common_style_source([first, second])
+
+        def build(msp):
+            return inherit_style(msp.add_arc(center, r, a0, a1), source)
+        return ReplaceEntitiesCommand("FILLET", [], [build]), ""
+
+    # -- one polyline, two of its segments -------------------------------------
+    if first is second:
+        rows = _rows(first)
+        closed = bool(first.closed)
+        n_seg = len(rows) if closed else len(rows) - 1
+        lo, hi = sorted((i1, i2))
+        if closed:
+            gap = (i2 - i1) % n_seg
+            lo, hi = (i1, i2) if gap in (1, 2) else (i2, i1)
+            gap = (hi - lo) % n_seg
+            rows = rows[lo:] + rows[:lo]          # segment lo is now 0
+            lo, hi = 0, gap
+        if hi - lo not in (1, 2):
+            return None, "not adjacent"
+        a = rows[lo][:2]
+        b = rows[(lo + 1) % len(rows)][:2]
+        c = rows[hi][:2]
+        d = rows[(hi + 1) % len(rows)][:2]
+        result = sided_fillet((a[0], a[1], b[0], b[1]), a,
+                              (c[0], c[1], d[0], d[1]), d, radius)
+        if isinstance(result, str):
+            return None, result
+        if not trim:
+            return arc_only(result)
+        _c, t1, t2, center, _f1, _f2, sweep = result
+        bulge = _arc_bulge(t1, t2, center, sweep) if center else 0.0
+        new = rows[:lo + 1] + [(t1[0], t1[1], bulge), (t2[0], t2[1], 0.0)] \
+            + rows[hi + 1:]
+        if closed and new and math.dist(new[-1][:2], new[0][:2]) < 1e-9:
+            new = new[:-1]
+        return ReplaceEntitiesCommand(
+            "FILLET", [first], [_poly_factory(first, new, closed)]), ""
+
+    # -- a line or another polyline joins at a polyline's end ------------------
+    polys = [e for e in (first, second) if e.dxftype() == "LWPOLYLINE"]
+    if any(p.closed for p in polys):
+        return None, "closed"
+    if first.dxftype() == "LWPOLYLINE":
+        head_rows = _ending_at(first, i1, pick1)
+        if head_rows is None:
+            return None, "not an end"
+        a, b = head_rows[-2][:2], head_rows[-1][:2]
+        seg1 = (a[0], a[1], b[0], b[1])
+        keep1 = a
+    else:
+        head_rows, seg1, keep1 = None, s1, pick1
+    if second.dxftype() == "LWPOLYLINE":
+        tail_rows = _ending_at(second, i2, pick2)
+        if tail_rows is None:
+            return None, "not an end"
+        tail_rows = _reverse_rows(tail_rows)      # the picked segment first
+        c, d = tail_rows[0][:2], tail_rows[1][:2]
+        seg2 = (c[0], c[1], d[0], d[1])
+        keep2 = d
+    else:
+        tail_rows, seg2, keep2 = None, s2, pick2
+    result = sided_fillet(seg1, keep1, seg2, keep2, radius)
+    if isinstance(result, str):
+        return None, result
+    if not trim:
+        return arc_only(result)
+    _c, t1, t2, center, far1, far2, sweep = result
+    bulge = _arc_bulge(t1, t2, center, sweep) if center else 0.0
+    rows = head_rows[:-1] if head_rows is not None else [(far1[0], far1[1], 0.0)]
+    rows = rows + [(t1[0], t1[1], bulge), (t2[0], t2[1], 0.0)]
+    rows += tail_rows[1:] if tail_rows is not None else [(far2[0], far2[1], 0.0)]
+    base = first if first.dxftype() == "LWPOLYLINE" else second
+    return ReplaceEntitiesCommand(
+        "FILLET", [first, second], [_poly_factory(base, rows, False)]), ""
+
+
 def _factory_for(piece, template):
     """A callable that adds one piece to a modelspace, styled like the source."""
     attribs = _style_of(template)

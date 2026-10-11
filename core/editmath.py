@@ -520,6 +520,64 @@ def fillet_arc(s1: Seg, s2: Seg, radius: float):
     return ((cx, cy), radius, a1, a2, t1, t2)
 
 
+def sided_fillet(s1: Seg, pick1: Point, s2: Seg, pick2: Point,
+                 radius: float):
+    """A fillet between two lines that keeps the side of each that was
+    picked, as AutoCAD does where the lines cross.
+
+    Returns ``(corner, t1, t2, center, far1, far2, sweep)`` -- the tangent
+    points (both the corner for radius 0), the fillet arc's centre (None
+    for radius 0), the end of each line that stays, and the arc's included
+    angle -- or the reason it cannot be made: "parallel" or "too large".
+    The old rule kept each line's end farther from the corner, which on
+    crossing lines is often the side NOT picked (GeoCad Yaguarete had to
+    patch it).
+    """
+    hit = line_line_intersection(s1, s2, infinite2=True)
+    if hit is None:
+        return "parallel"
+    corner = hit[1]
+
+    def side(seg: Seg, pick: Point):
+        dx, dy = seg[2] - seg[0], seg[3] - seg[1]
+        length = math.hypot(dx, dy)
+        if length < EPS:
+            return None
+        ux, uy = dx / length, dy / length
+        along = (pick[0] - corner[0]) * ux + (pick[1] - corner[1]) * uy
+        if abs(along) < EPS:            # picked on the corner: the far end
+            ends = ((seg[0] - corner[0]) * ux + (seg[1] - corner[1]) * uy,
+                    (seg[2] - corner[0]) * ux + (seg[3] - corner[1]) * uy)
+            along = max(ends, key=abs)
+        if along < 0:
+            ux, uy = -ux, -uy
+        far = max(((seg[0], seg[1]), (seg[2], seg[3])),
+                  key=lambda p: (p[0] - corner[0]) * ux + (p[1] - corner[1]) * uy)
+        reach = (far[0] - corner[0]) * ux + (far[1] - corner[1]) * uy
+        return (ux, uy), far, reach
+
+    a, b = side(s1, pick1), side(s2, pick2)
+    if a is None or b is None:
+        return "parallel"
+    (u1, far1, reach1), (u2, far2, reach2) = a, b
+    cos_phi = max(-1.0, min(1.0, u1[0] * u2[0] + u1[1] * u2[1]))
+    phi = math.acos(cos_phi)
+    if phi < EPS or abs(phi - math.pi) < EPS:
+        return "parallel"
+    if radius <= 0.0:
+        return corner, corner, corner, None, far1, far2, 0.0
+    along = radius / math.tan(phi / 2.0)
+    if along >= reach1 - EPS or along >= reach2 - EPS:
+        return "too large"
+    t1 = (corner[0] + u1[0] * along, corner[1] + u1[1] * along)
+    t2 = (corner[0] + u2[0] * along, corner[1] + u2[1] * along)
+    bx, by = u1[0] + u2[0], u1[1] + u2[1]
+    bl = math.hypot(bx, by)
+    centre_at = radius / math.sin(phi / 2.0)
+    center = (corner[0] + bx / bl * centre_at, corner[1] + by / bl * centre_at)
+    return corner, t1, t2, center, far1, far2, math.pi - phi
+
+
 def fillet_parallel(s1: Seg, pick1: Point, s2: Seg):
     """FILLET of two parallel lines: ``(new_s2, (center, r, a0, a1))``.
 
