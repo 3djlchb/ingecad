@@ -354,6 +354,7 @@ class ListTool(Tool):
     """LIST: the property dump of the selected objects."""
 
     wants_selection = True
+    modifies_selection = False   # reads the set; locked layers count
 
     def start(self) -> None:
         self.name = "LIST"

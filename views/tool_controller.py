@@ -624,7 +624,7 @@ class ToolController(QObject):
                 # The highlight STAYS while the command runs (AutoCAD keeps
                 # the cutting edges lit during TRIM to guide the picks);
                 # _finish clears it.
-                entities = self._selection_entities()
+                entities = self._unlocked_for(self.tool, self._selection_entities())
                 self._previous_selection = set(self.selection)
                 self.tool.on_selection(entities)
             else:
@@ -846,6 +846,30 @@ class ToolController(QObject):
                 continue
             handles.append(handle)
         return handles
+
+    def _unlocked_for(self, tool, entities) -> list:
+        """``entities`` without those on a locked layer when ``tool`` edits
+        what it is handed: "Objects on a locked layer cannot be modified"
+        (LAYER, Command Reference). A window over a locked layer erased and
+        moved its objects as if it were not."""
+        document = getattr(self.window, "document", None)
+        if document is None or (tool is not None
+                                and not getattr(tool, "modifies_selection", True)):
+            return entities
+        layers = document.doc.layers
+        kept = []
+        for entity in entities:
+            name = entity.dxf.get("layer", "0")
+            layer = layers.get(name) if name in layers else None
+            if layer is None or not layer.is_locked():
+                kept.append(entity)
+        locked = len(entities) - len(kept)
+        if locked == 1:
+            self.window.command_line.echo(tr("1 was on a locked layer."))
+        elif locked:
+            self.window.command_line.echo(
+                tr("{n} were on a locked layer.", n=locked))
+        return kept
 
     def select_all(self) -> int:
         """Ctrl+A: every selectable entity of the current space -- what is
@@ -3054,7 +3078,17 @@ class ToolController(QObject):
 
     def _filtered(self, handles) -> set:
         """What the selection filter lets in; says how many it kept out,
-        so a filter left on never looks like a pick that failed."""
+        so a filter left on never looks like a pick that failed. With no
+        command running (pickfirst) objects on a locked layer stay out too:
+        Delete, Ctrl+X, grips and the properties panel all act on that set,
+        and none of them may change a locked layer."""
+        if self._selecting_for is None and self.tool is None:
+            document = self.window.document
+            if document is not None:
+                db = document.doc.entitydb
+                entities = [e for h in handles if (e := db.get(h)) is not None]
+                handles = {e.dxf.handle
+                           for e in self._unlocked_for(None, entities)}
         if self.pick_filter is None:
             return set(handles)
         from core import pickfilter
@@ -3133,6 +3167,7 @@ class ToolController(QObject):
         self._sel_remove = False
         self._sel_force = None
         self._previous_selection = set(self.selection)
+        entities = self._unlocked_for(tool, entities)
         # keep the highlight while the command runs (AutoCAD behavior)
         tool.on_selection(entities)
         self.changed.emit()

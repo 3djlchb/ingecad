@@ -52,6 +52,10 @@ class Tool:
     # purpose: a dataclass FIELD would make the generated __init__ reset
     # the subclass override back to False on every instance.
     wants_selection: ClassVar[bool] = False
+    #: A selecting tool that changes what it is handed: objects on a locked
+    #: layer are left out of its set, as AutoCAD does. Tools that only read
+    #: the set (LIST, TRIM's cutting edges, BLOCK) say False.
+    modifies_selection: ClassVar[bool] = True
     shift: ClassVar[bool] = False              # Shift held at last click
     # Tools whose clicks pick ENTITIES (trim targets, fillet lines) get raw
     # cursor points: AutoCAD suppresses osnap during object picking.

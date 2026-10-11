@@ -2046,5 +2046,7 @@
   "*Invalid selection*": "*Selección no válida*",
   "Expects a point or Window/Last/Crossing/ALL/Previous/Undo/Add/Remove": "Se espera un punto o Ventana/Último/Captura/TODO/Previo/Deshacer/Añadir/Eliminar",
   "{count} found": "{count} encontrado(s)",
-  "Everything has been undone": "Se ha deshecho todo"
+  "Everything has been undone": "Se ha deshecho todo",
+  "1 was on a locked layer.": "1 estaba en una capa bloqueada.",
+  "{n} were on a locked layer.": "{n} estaban en una capa bloqueada."
 }

@@ -628,6 +628,7 @@ def _mode_word(quick: bool) -> str:
 
 class _TrimExtendBase(Tool):
     wants_selection = True   # the cutting/boundary edges
+    modifies_selection = False   # reads the set; locked layers count
     entity_picker = True
     accepts_target_windows = True
     trim_mode = True
