@@ -2436,9 +2436,11 @@ class ToolController(QObject):
             self._clear_preview()
 
     def _clear_preview(self) -> None:
-        if self._preview_key is not None:
-            self._preview_key = None
-            self.window.viewport.set_preview_scene(None)
+        # Unconditional: _preview_now forgets the key before rebuilding, so
+        # a key check here left the last picture up whenever the new step
+        # had nothing to preview. Clearing an absent preview is free.
+        self._preview_key = None
+        self.window.viewport.set_preview_scene(None)
 
     def _sync_ghost(self, wx: float, wy: float) -> None:
         """MOVE/COPY/PASTE drag preview: the tool exposes ghost_entities +
@@ -3172,6 +3174,8 @@ class ToolController(QObject):
             if step:
                 wx, wy = round(wx / step) * step, round(wy / step) * step
         ortho = self.ortho_on != self.shift_held
+        if ortho and self.tool is not None and not self.tool.ortho_applies():
+            ortho = False
         anchor = self.anchor_point()
         if self.otrack_on and self._track_points:
             tracked = self._tracked(wx, wy, anchor, ortho)

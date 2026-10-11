@@ -1817,6 +1817,10 @@ class RectangTool(Tool):
         self.prompt(
             "Specify other corner point or [Area/Dimensions/Rotation]:")
 
+    def ortho_applies(self) -> bool:
+        # the opposite corner is free; a Rotation picked by point is not
+        return not (self._first is not None and self._await is None)
+
     # -- geometry --------------------------------------------------------------
     def _to_local(self, point: Point) -> tuple[float, float]:
         rot = math.radians(type(self).rotation)

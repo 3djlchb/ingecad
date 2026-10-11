@@ -88,3 +88,17 @@ def test_a_library_linetype_is_loaded_on_the_way(win):
     lines = _lines(win)
     assert {l.dxf.linetype for l in lines} == {"DASHED"}
     assert {l.dxf.lineweight for l in lines} == {30}, "snapped to 0.30 mm"
+
+
+def test_a_colour_pick_replaces_a_true_colour(win):
+    """GeoCad Yaguareté had to patch this: polygons that came from QGIS
+    carry a true colour (group 420), which wins over the ACI, so picking a
+    colour changed nothing on screen. AutoCAD's pick replaces both."""
+    line = _lines(win)[0]
+    line.dxf.true_color = 0x00FF8000
+    for text in ("CHPROP", "ALL", "", "C", "5", ""):
+        _type(win, text)
+    assert not line.dxf.hasattr("true_color")
+    assert line.dxf.color == 5
+    win.history.undo()
+    assert line.dxf.true_color == 0x00FF8000

@@ -1192,3 +1192,45 @@ def test_a_swallowed_middle_release_does_not_stick_the_pan(qapp):
     finally:
         win.document.dirty = False
         win.close()
+
+
+def test_yes_in_discard_throws_the_text_away_once(qapp):
+    """GeoCad Yaguareté had to patch this: the click on the Discard
+    dialog's "Yes" reached the editor's application-wide filter as a
+    click OUTSIDE it, which commits -- so the text the user was throwing
+    away was created, and the editor was then closed a second time."""
+    import sys
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QMessageBox
+
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+    from modal import drive_modal
+
+    win = _editor_window(qapp)
+    cancelled = []
+    try:
+        win.dispatcher.submit("MTEXT")
+        win.tools.tool.on_point((0.0, 10.0))
+        win.tools.tool.on_point((50.0, 0.0))
+        qapp.processEvents()
+        editor = win.tools._mtext_editor
+        original_cancel = editor._on_cancel
+        editor._on_cancel = lambda: (cancelled.append(1), original_cancel())
+        QTest.keyClicks(editor.edit, "borrador")
+        errors: list = []
+
+        def yes(box):
+            QTest.mouseClick(box.button(QMessageBox.Yes), Qt.LeftButton)
+
+        drive_modal(QMessageBox, yes, errors)
+        QTest.keyClick(editor.edit, Qt.Key_Escape)
+        qapp.processEvents()
+        assert not errors
+        assert not [e for e in win.document.modelspace()
+                    if e.dxftype() == "MTEXT"], "the discarded text was created"
+        assert cancelled == [1]
+        assert not editor.isVisible()
+    finally:
+        win.close()

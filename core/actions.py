@@ -2458,13 +2458,24 @@ class SetPropertyCommand(Command):
         # tester who moved his dimensions to a red layer "cotas" saw them
         # stay white because the block content had stayed on layer 0.
         self._redressed: list = []
+        self._true_colors: list = []    # (entity, true_color, color_name)
 
     def do(self, document) -> None:
         self._old = []
         self._redressed = []
+        self._true_colors = []
         for e in self.entities:
             old = e.dxf.get(self.prop, None)
             self._old.append(old)
+            if self.prop == "color":
+                # A true colour (group 420) wins over the ACI, so picking
+                # red on a polygon that came from QGIS changed nothing on
+                # screen. AutoCAD's colour pick replaces both.
+                self._true_colors.append(
+                    (e, e.dxf.get("true_color", None),
+                     e.dxf.get("color_name", None)))
+                e.dxf.discard("true_color")
+                e.dxf.discard("color_name")
             e.dxf.set(self.prop, self.value)
             if self.prop == "layer" and e.dxftype() in _DIM_TYPES:
                 self._redressed.extend(
@@ -2478,6 +2489,11 @@ class SetPropertyCommand(Command):
                 e.dxf.discard(self.prop)
             else:
                 e.dxf.set(self.prop, old)
+        for e, true_color, color_name in self._true_colors:
+            if true_color is not None:
+                e.dxf.true_color = true_color
+            if color_name is not None:
+                e.dxf.color_name = color_name
         for blk_entity, layer in self._redressed:
             if blk_entity.is_alive:
                 blk_entity.dxf.layer = layer

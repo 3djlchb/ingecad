@@ -121,6 +121,12 @@ class Tool:
         override, etc.): Space must insert a space, not execute."""
         return False
 
+    def ortho_applies(self) -> bool:
+        """Does ORTHO constrain the point asked for now? Almost always;
+        not a rectangle's opposite corner, which AutoCAD leaves free (an
+        orthogonal corner is a zero-size rectangle)."""
+        return True
+
     def on_enter(self) -> None:
         """Enter on an empty prompt: finish where that is meaningful."""
         self.ctx.finish()

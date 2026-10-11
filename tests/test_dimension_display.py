@@ -351,3 +351,31 @@ def test_the_dimension_preview_is_the_dimension_the_click_leaves(qapp) -> None:
         assert preview.triangles.vertex_count == final.triangles.vertex_count
     finally:
         win.close()
+
+
+def test_an_option_that_leaves_no_preview_clears_the_old_one(qapp):
+    """GeoCad Yaguareté had to patch this: _preview_now forgot the preview
+    key BEFORE asking _clear_preview, which only clears when it has a key
+    -- so a step with nothing to preview left the last picture on screen."""
+    from core import actions
+    from views.main_window import MainWindow
+
+    win = MainWindow()
+    try:
+        win.new_document()
+        t = win.tools
+        t._execute(actions.add_line((0, 0), (50, 0)))
+        win.dispatcher.submit("DIMLINEAR")
+        t.on_hover(0, 0, threshold_world=1.0)
+        t.on_click(0, 0)
+        t.on_hover(50, 0, threshold_world=1.0)
+        t.on_click(50, 0)
+        t.on_hover(25, 10, threshold_world=1.0)
+        assert win.viewport._preview_scene is not None
+        t.tool.preview_command = lambda point: None   # this step: nothing
+        t.on_text("H")                                 # an option re-previews
+        assert win.viewport._preview_scene is None, "the old preview stayed"
+        t.cancel()
+    finally:
+        win.document.dirty = False
+        win.close()

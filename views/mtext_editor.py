@@ -1118,7 +1118,7 @@ class MTextInPlaceEditor(QWidget):
                 self, tr("Text Editor"),
                 tr("Discard the changes to this text?"),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if answer != QMessageBox.Yes:
+            if answer != QMessageBox.Yes or self._closed:
                 return
         self._teardown()
         self._on_cancel()
@@ -1160,6 +1160,11 @@ class MTextInPlaceEditor(QWidget):
             if not inside:
                 popup = QApplication.activePopupWidget()
                 if popup is not None:       # a combo's list is "inside"
+                    return False
+                if QApplication.activeModalWidget() is not None:
+                    # A dialog the editor opened (Discard?, a colour, a
+                    # symbol): its "Yes" is not a click outside the text.
+                    # Committing here created the text being discarded.
                     return False
                 self.commit()
             return False
