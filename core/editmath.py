@@ -380,9 +380,14 @@ def extend_arc(center: Point, r: float, a_start: float, a_end: float,
             crossings.append(rel_c)
     if not crossings:
         return None
+    # angles in [0, 360), as AutoCAD writes them: extending past 0° gave a
+    # start of -11.5° (found by the release tour)
     if forward:
-        return (math.degrees(s), math.degrees(s + min(crossings)))
-    return (math.degrees(s - (math.tau - max(crossings))), math.degrees(s + sweep))
+        start, end = math.degrees(s), math.degrees(s + min(crossings))
+    else:
+        start = math.degrees(s - (math.tau - max(crossings)))
+        end = math.degrees(s + sweep)
+    return (start % 360.0, end % 360.0)
 
 
 def extend_polyline(points: list[Point], closed: bool, pick_point: Point,

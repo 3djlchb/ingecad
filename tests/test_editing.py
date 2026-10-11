@@ -1287,3 +1287,22 @@ def test_offset_command_adds_every_island(qapp):
     finally:
         win.document.dirty = False
         win.close()
+
+
+def test_an_arc_extended_past_zero_degrees_keeps_angles_in_range():
+    """Found by the release tour: an arc from 0° to 90° extended down to a
+    line came out with a start angle of -11.5°. AutoCAD writes [0, 360)."""
+    import math
+
+    h = Harness()
+    h.msp.add_line((-6.0, -1.0), (6.0, -1.0))
+    h.msp.add_arc((0.0, 0.0), 5.0, 0.0, 90.0)
+    tool = ExtendTool(h.ctx)
+    tool.start()
+    tool.on_selection([])
+    tool.on_point((4.33, 2.5))           # near the 0° end
+    arc = h.msp.query("ARC")[0]
+    want = 360.0 - math.degrees(math.asin(0.2))
+    assert 0.0 <= arc.dxf.start_angle < 360.0
+    assert arc.dxf.start_angle == pytest.approx(want)
+    assert arc.dxf.end_angle == pytest.approx(90.0)
