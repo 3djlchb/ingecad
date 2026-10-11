@@ -873,6 +873,38 @@ class SnapEngine:
                     hit = _seg_intersection(segs[a], segs[b_])
                     if hit is not None:
                         offer("INT", hit[0], hit[1])
+        if "INT" in kinds:
+            # Circles, arcs and a polyline's curved segments cross lines and
+            # each other too (#82: INT answered only between straight
+            # segments). Only rims within reach of the cursor take part.
+            rims = []
+            for arr, oids, full in ((circles, self._circle_oidx, True),
+                                    (arcs, self._arc_oidx, False)):
+                if not len(arr):
+                    continue
+                reach = np.abs(np.hypot(cx - arr[:, 0], cy - arr[:, 1])
+                               - arr[:, 2]) <= threshold
+                for i in np.nonzero(reach)[0][:32]:
+                    rims.append((arr[i], int(oids[i]) if len(oids) else -1, full))
+            for j, (row, oid, full) in enumerate(rims):
+                for a in near_idx:
+                    if len(seg_oids) and seg_oids[a] == oid:
+                        continue
+                    for x, y in _segment_circle_crossings(segs[a], row):
+                        if full or _angle_in_sweep(
+                                math.atan2(y - row[1], x - row[0]) % math.tau,
+                                row[3], row[4]):
+                            offer("INT", x, y)
+                for row2, oid2, full2 in rims[j + 1:]:
+                    if oid2 == oid:
+                        continue
+                    for x, y in _circle_circle_crossings(row, row2):
+                        if (full or _angle_in_sweep(
+                                math.atan2(y - row[1], x - row[0]) % math.tau,
+                                row[3], row[4])) and (full2 or _angle_in_sweep(
+                                math.atan2(y - row2[1], x - row2[0]) % math.tau,
+                                row2[3], row2[4])):
+                            offer("INT", x, y)
         if "PER" in kinds and from_point is not None and len(near_idx):
             fx, fy = from_point
             # A foot ON the point it is drawn from is no perpendicular: the
@@ -909,6 +941,40 @@ class SnapEngine:
                         offer("NEA", p[0], p[1])
 
         return best[2] if best else None
+
+
+def _segment_circle_crossings(seg, row):
+    """Where segment (x1, y1, x2, y2) crosses the circle of ``row``."""
+    x1, y1, x2, y2 = seg
+    cx, cy, r = row[0], row[1], row[2]
+    dx, dy = x2 - x1, y2 - y1
+    L2 = dx * dx + dy * dy
+    if L2 == 0:
+        return []
+    t0 = ((cx - x1) * dx + (cy - y1) * dy) / L2
+    fx, fy = x1 + t0 * dx, y1 + t0 * dy
+    h2 = r * r - ((cx - fx) ** 2 + (cy - fy) ** 2)
+    if h2 < -1e-12 * max(1.0, r * r):
+        return []
+    dt = math.sqrt(max(h2, 0.0) / L2)
+    out = []
+    for t in (t0 - dt, t0 + dt):
+        if -1e-9 <= t <= 1 + 1e-9:
+            out.append((x1 + t * dx, y1 + t * dy))
+    return out
+
+
+def _circle_circle_crossings(a, b):
+    """Where the circles of rows ``a`` and ``b`` cross (0, 1 or 2 points)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    d = math.hypot(dx, dy)
+    r1, r2 = a[2], b[2]
+    if d == 0 or d > r1 + r2 + 1e-9 * max(1.0, d) or d < abs(r1 - r2) - 1e-9 * max(1.0, d):
+        return []
+    m = (r1 * r1 - r2 * r2 + d * d) / (2 * d)
+    h = math.sqrt(max(r1 * r1 - m * m, 0.0))
+    mx, my = a[0] + m * dx / d, a[1] + m * dy / d
+    return [(mx + h * dy / d, my - h * dx / d), (mx - h * dy / d, my + h * dx / d)]
 
 
 def _tangent_points(row, px: float, py: float):
