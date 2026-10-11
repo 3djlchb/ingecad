@@ -1989,5 +1989,10 @@
   "Close All": "Cerrar todo",
   "Close All Other Drawings": "Cerrar todos los demás dibujos",
   "Copy Full File Path": "Copiar ruta completa del archivo",
-  "Open File Location": "Abrir ubicación del archivo"
+  "Open File Location": "Abrir ubicación del archivo",
+  "Remove objects:": "Designe objetos a eliminar:",
+  "*Invalid selection*": "*Selección no válida*",
+  "Expects a point or Window/Last/Crossing/ALL/Previous/Undo/Add/Remove": "Se espera un punto o Ventana/Último/Captura/TODO/Previo/Deshacer/Añadir/Eliminar",
+  "{count} found": "{count} encontrado(s)",
+  "Everything has been undone": "Se ha deshecho todo"
 }

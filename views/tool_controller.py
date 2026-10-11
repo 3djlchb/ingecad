@@ -434,6 +434,11 @@ class ToolController(QObject):
         # Selection state (idle noun set, or the set a tool is acquiring).
         self.index: Optional[GeometryIndex] = None
         self.selection: set[str] = set()
+        # typed answers at "Select objects:" (_selection_option)
+        self._sel_remove = False          # Remove(R) mode until Add(A)
+        self._sel_force: Optional[str] = None   # "W"/"C" for the next window
+        self._previous_selection: set[str] = set()   # Previous(P)
+        self._sel_history: list[set[str]] = []       # Undo(U)
         self._selecting_for: Optional[Tool] = None
         # Rectangles a crossing selection covered, for the one command that
         # cares WHERE the selection touched: STRETCH.
@@ -619,9 +624,13 @@ class ToolController(QObject):
                 # the cutting edges lit during TRIM to guide the picks);
                 # _finish clears it.
                 entities = self._selection_entities()
+                self._previous_selection = set(self.selection)
                 self.tool.on_selection(entities)
             else:
                 self._selecting_for = self.tool
+                self._sel_remove = False
+                self._sel_force = None
+                self._sel_history = []
                 self.window.command_line.echo_prompt(self.tool.selection_prompt())
         self.changed.emit()
 
@@ -817,16 +826,16 @@ class ToolController(QObject):
         self._sel_entities_cache = (key, out)
         return out
 
-    def select_all(self) -> int:
-        """Ctrl+A: every selectable entity of the current space -- what is
-        on a layer that is on, thawed and unlocked, and not isolated away."""
+    def _selectable(self, entities):
+        """The handles of ``entities`` a pick may take: on a layer that is
+        on, thawed and unlocked, and not isolated away."""
         document = getattr(self.window, "document", None)
         if document is None:
-            return 0
+            return []
         layers = document.doc.layers
         hidden = getattr(document, "_isolated_hidden", None) or set()
-        handles = set()
-        for entity in document.current_space():
+        handles = []
+        for entity in entities:
             handle = entity.dxf.get("handle")
             if not handle or handle in hidden:
                 continue
@@ -834,7 +843,16 @@ class ToolController(QObject):
             layer = layers.get(name) if name in layers else None
             if layer is not None and (layer.is_off() or layer.is_frozen() or layer.is_locked()):
                 continue
-            handles.add(handle)
+            handles.append(handle)
+        return handles
+
+    def select_all(self) -> int:
+        """Ctrl+A: every selectable entity of the current space -- what is
+        on a layer that is on, thawed and unlocked, and not isolated away."""
+        document = getattr(self.window, "document", None)
+        if document is None:
+            return 0
+        handles = set(self._selectable(document.current_space()))
         self.selection = self._filtered(handles)
         self._highlight_cache = None
         self._grips_cache = None
@@ -2842,12 +2860,26 @@ class ToolController(QObject):
             if self.window.document is None:
                 return
             self.index = GeometryIndex(self.window.document)
+        # Remove(R) at "Select objects": every pick takes away, as Shift does
+        shift = shift or (self._selecting_for is not None
+                          and getattr(self, "_sel_remove", False))
+        force = getattr(self, "_sel_force", None)
+        if self._selecting_for is not None and self._window_anchor is not None:
+            self._sel_history.append(set(self.selection))   # Undo(U) target
+        if force is not None and self._window_anchor is None:
+            # Window(W) / Crossing(C): the first click is a corner even on
+            # an object, as AutoCAD asks "Specify first corner:"
+            self._window_anchor = (wx, wy)
+            self.window.command_line.echo_prompt(tr("Specify opposite corner:"))
+            return
         if self._window_anchor is not None:
             # second corner: apply window (L->R, fully inside) or crossing
             ax, ay = self._window_anchor
             self._window_anchor = None
             rect = (min(ax, wx), min(ay, wy), max(ax, wx), max(ay, wy))
-            crossing = wx < ax
+            crossing = wx < ax if force is None else force == "C"
+            if force is not None:
+                self._sel_force = None
             hits = self.index.crossing(rect) if crossing else self.index.window(rect)
             if crossing and not shift:
                 self._crossing_rects.append(rect)
@@ -2856,6 +2888,8 @@ class ToolController(QObject):
             else:
                 self.selection |= self._filtered(self._with_groups(hits))
             self._echo_count()
+            if force is not None and self._selecting_for is not None:
+                self.window.command_line.echo_prompt(self._selection_prompt())
             return
         previous = self._cycle
         if shift:
@@ -2868,6 +2902,8 @@ class ToolController(QObject):
         if handle is None:
             self._window_anchor = (wx, wy)
             return
+        if self._selecting_for is not None:
+            self._sel_history.append(set(self.selection))   # Undo(U) target
         if shift:
             self.reset_pick_cycle()
             self.selection -= self._with_groups([handle])
@@ -2879,6 +2915,82 @@ class ToolController(QObject):
                 self.selection -= self._with_groups([previous[1][previous[2]]])
             self.selection |= self._filtered(self._with_groups([handle]))
         self._echo_count()
+
+    # -- typed answers at "Select objects:" (AutoCAD's SELECT options) ---------
+    _SELECT_OPTIONS = {
+        "ALL": "ALL", "TODO": "ALL", "L": "L", "LAST": "L",
+        "ULTIMO": "L", "ÚLTIMO": "L", "U": "U", "UNDO": "U", "P": "P", "PREVIOUS": "P", "PREVIO": "P",
+        "W": "W", "WINDOW": "W", "V": "W", "VENTANA": "W", "C": "C",
+        "CROSSING": "C", "CAPTURA": "C", "R": "R", "REMOVE": "R",
+        "E": "R", "ELIMINAR": "R", "A": "A", "ADD": "A", "AÑADIR": "A",
+    }
+
+    def _selection_prompt(self) -> str:
+        if getattr(self, "_sel_remove", False):
+            return tr("Remove objects:")
+        return self._selecting_for.selection_prompt()
+
+    def _selection_option(self, text: str) -> None:
+        """ALL, Last, Previous, Window, Crossing, Remove and Add, typed at a
+        Select Objects prompt (SELECT, Command Reference): the English
+        letters, and the Spanish names as an extra. Coordinates answer a
+        Window/Crossing corner."""
+        echo = self.window.command_line.echo
+        option = self._SELECT_OPTIONS.get(text.upper().lstrip("_"))
+        document = self.window.document
+        if option is None and getattr(self, "_sel_force", None) is not None:
+            try:
+                point = parse_point(text, None)
+            except CoordinateError:
+                point = None
+            if point is not None:
+                self._selection_click(point.x, point.y, False)
+                return
+        if option is None or document is None:
+            echo(tr("*Invalid selection*"))
+            echo(tr("Expects a point or Window/Last/Crossing/ALL/Previous/Undo/Add/Remove"))
+            self.window.command_line.echo_prompt(self._selection_prompt())
+            return
+        if option in ("W", "C"):
+            self._sel_force = option
+            self._window_anchor = None
+            self.window.command_line.echo_prompt(tr("Specify first corner:"))
+            return
+        if option == "U":
+            if self._sel_history:
+                self.selection = self._sel_history.pop()
+                self._highlight_cache = None
+                self._grips_cache = None
+            else:
+                echo(tr("Everything has been undone"))
+            self._echo_count()
+        elif option == "R":
+            self._sel_remove = True
+        elif option == "A":
+            self._sel_remove = False
+        else:
+            if option == "ALL":
+                found = set(self._selectable(document.current_space()))
+            elif option == "L":
+                found = set()
+                for entity in reversed(list(document.current_space())):
+                    if self._selectable([entity]):
+                        found = {entity.dxf.handle}
+                        break
+            else:                                    # Previous
+                db = document.doc.entitydb
+                found = {h for h in getattr(self, "_previous_selection", set())
+                         if (e := db.get(h)) is not None and e.is_alive}
+            echo(tr("{count} found", count=len(found)))
+            self._sel_history.append(set(self.selection))
+            if getattr(self, "_sel_remove", False):
+                self.selection -= found
+            else:
+                self.selection |= self._filtered(self._with_groups(found))
+            self._highlight_cache = None
+            self._grips_cache = None
+            self._echo_count()
+        self.window.command_line.echo_prompt(self._selection_prompt())
 
     def _filtered(self, handles) -> set:
         """What the selection filter lets in; says how many it kept out,
@@ -2958,6 +3070,9 @@ class ToolController(QObject):
         self._selecting_for = None
         entities = self._selection_entities()
         self._window_anchor = None
+        self._sel_remove = False
+        self._sel_force = None
+        self._previous_selection = set(self.selection)
         # keep the highlight while the command runs (AutoCAD behavior)
         tool.on_selection(entities)
         self.changed.emit()
@@ -3074,7 +3189,8 @@ class ToolController(QObject):
             if not text.strip():
                 self.finish_selection()
                 return True
-            self.window.command_line.echo_prompt(self._selecting_for.selection_prompt())
+            self._selection_option(text.strip())
+            self.changed.emit()
             return True
         if self.tool is None:
             return False
