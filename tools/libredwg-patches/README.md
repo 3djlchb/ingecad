@@ -35,8 +35,7 @@ Read sweep (200 corpus drawings, old vs new `dwg2dxf`, IngeCAD's reader):
 of them (none before). Write sweep (120 drawings through IngeCAD's save,
 ODA as judge): no drawing worse, and 10 that ODA rejected now read --
 the old `dxf2dwg` mis-wrote the DIMASSOC the new reader brings, so both
-halves of this patch go together. Upstream: local branch `dimassoc-stable`
-in `~/Proyectos/externos/libredwg` (not pushed yet).
+halves of this patch go together. Upstream: #1434.
 
 ## 2026-10-10: annotative scales and viewports survive Save as DWG
 
