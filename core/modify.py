@@ -779,16 +779,17 @@ def _factory_for(piece, template):
     def build(msp):
         kind = piece[0]
         if kind == "LINE":
-            return msp.add_line(piece[1], piece[2], dxfattribs=dict(attribs))
+            return carry_body(msp.add_line(piece[1], piece[2],
+                                           dxfattribs=dict(attribs)), template)
         if kind == "ARC":
             _k, center, radius, a0, a1 = piece
-            return msp.add_arc(center, radius, a0, a1,
-                               dxfattribs=dict(attribs))
+            return carry_body(msp.add_arc(center, radius, a0, a1,
+                                          dxfattribs=dict(attribs)), template)
         _k, points, closed = piece
         poly = msp.add_lwpolyline(points, format="xyseb",
                                   dxfattribs=dict(attribs))
         poly.closed = closed
-        return poly
+        return carry_body(poly, template)
 
     return build
 
@@ -813,12 +814,85 @@ def inherit_style(entity, template) -> object:
             entity.dxf.set(name, value)
         except Exception:
             pass
+    carry_body(entity, template)
     xdata = getattr(template, "xdata", None)
     for appid in list(getattr(xdata, "data", {}) or {}):
         try:
             entity.set_xdata(appid, list(template.get_xdata(appid)))
         except Exception:
             pass
+    return entity
+
+
+def _plan_z(entity):
+    """The height a flat object of the plan sits at, or None: an LWPOLYLINE's
+    elevation, a level LINE's Z, an ARC's or CIRCLE's centre Z. Only for
+    objects drawn on the plan (+Z extrusion)."""
+    try:
+        if tuple(entity.dxf.get("extrusion", (0, 0, 1))) != (0, 0, 1):
+            return None
+        kind = entity.dxftype()
+        if kind == "LWPOLYLINE":
+            return float(entity.dxf.get("elevation", 0.0))
+        if kind == "POLYLINE" and entity.is_2d_polyline:
+            return float(entity.dxf.elevation.z)
+        if kind == "LINE":
+            z0, z1 = entity.dxf.start.z, entity.dxf.end.z
+            return z0 if abs(z0 - z1) < 1e-12 else None
+        if kind in ("ARC", "CIRCLE"):
+            return entity.dxf.center.z
+    except Exception:  # noqa: BLE001 -- an odd entity carries nothing
+        return None
+    return None
+
+
+def _const_width(entity):
+    """An LWPOLYLINE's width when it is the same everywhere, else None."""
+    if entity.dxftype() != "LWPOLYLINE":
+        return None
+    width = entity.dxf.get("const_width", None)
+    if width:
+        return width
+    rows = list(entity.get_points("se"))
+    if rows and all(abs(s - rows[0][0]) < 1e-12 and abs(e - rows[0][0]) < 1e-12
+                    for s, e in rows) and rows[0][0] > 0:
+        return rows[0][0]
+    return None
+
+
+def carry_body(entity, template) -> object:
+    """Give a piece the body of the object it came from: its height on the
+    plan, its thickness and its constant width.
+
+    TRIM, EXTEND, BREAK, OFFSET and JOIN build new objects from 2D points,
+    so a contour at elevation 3500 came back at 0 and a 0.5-wide polyline
+    came back hairline. AutoCAD hands back the same object, shortened."""
+    if template is None or entity is None:
+        return entity
+    z = _plan_z(template)
+    kind = entity.dxftype()
+    try:
+        if z is not None and tuple(entity.dxf.get("extrusion", (0, 0, 1))) \
+                == (0, 0, 1):
+            if kind == "LWPOLYLINE":
+                entity.dxf.elevation = z
+            elif kind == "LINE":
+                s, e = entity.dxf.start, entity.dxf.end
+                entity.dxf.start = (s.x, s.y, z)
+                entity.dxf.end = (e.x, e.y, z)
+            elif kind in ("ARC", "CIRCLE"):
+                c = entity.dxf.center
+                entity.dxf.center = (c.x, c.y, z)
+        thickness = template.dxf.get("thickness", 0.0) \
+            if template.dxf.is_supported("thickness") else 0.0
+        if thickness and entity.dxf.is_supported("thickness"):
+            entity.dxf.thickness = thickness
+        width = _const_width(template)
+        if width and kind == "LWPOLYLINE" and not any(
+                s or e for s, e in entity.get_points("se")):
+            entity.dxf.const_width = width
+    except Exception:  # noqa: BLE001 -- the piece stays as it was built
+        pass
     return entity
 
 
@@ -1380,11 +1454,15 @@ def apply_pedit(entity, operation: str, value=None) -> None:
                 for x, y, _sw, _ew, b in entity.get_points("xyseb")]
         entity.set_points(rows, format="xyseb")
     elif operation == "reverse":
-        rows = _reverse_rows([(x, y, b)
-                              for x, y, _sw, _ew, b in
-                              entity.get_points("xyseb")])
-        entity.set_points([(x, y, 0.0, 0.0, b) for x, y, b in rows],
-                          format="xyseb")
+        old = list(entity.get_points("xyseb"))
+        rows = _reverse_rows([(x, y, b) for x, y, _sw, _ew, b in old])
+        # segment k of the reversed polyline is segment n-2-k of the old
+        # one walked backwards: its widths swap ends (they were zeroed)
+        n = len(old)
+        widths = [(old[(n - 2 - k) % n][3], old[(n - 2 - k) % n][2])
+                  for k in range(n)]
+        entity.set_points([(x, y, sw, ew, b) for (x, y, b), (sw, ew)
+                           in zip(rows, widths)], format="xyseb")
 
 
 def polyline_edit(entity, operation: str, value=None) -> PolylineEditCommand:

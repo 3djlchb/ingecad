@@ -495,6 +495,8 @@ class OffsetTool(Tool):
         return abs(math.dist((cx, cy), side) - r) or None
 
     def _emit(self, entity, side: Point) -> None:
+        from core.modify import carry_body
+
         distance = self._distance_for(entity, side)
         if not distance:
             self.ctx.echo(tr("Value must be positive."))
@@ -513,8 +515,8 @@ class OffsetTool(Tool):
             # island, as AutoCAD's OFFSET does (#58)
             adds = [actions.AddEntityCommand(
                 "OFFSET",
-                lambda msp, r=rows, c=closed, a=attribs: _add_polyline(
-                    msp, r, c, a),
+                lambda msp, r=rows, c=closed, a=attribs: carry_body(
+                    _add_polyline(msp, r, c, a), entity),
                 layer=layer) for rows, closed in pieces]
             if len(adds) == 1:
                 self.ctx.execute(adds[0])
@@ -532,8 +534,8 @@ class OffsetTool(Tool):
             n = editmath.offset_line(seg, distance, side)
             command = actions.AddEntityCommand(
                 "OFFSET",
-                lambda msp, p=n, a=attribs: msp.add_line(
-                    (p[0], p[1]), (p[2], p[3]), dxfattribs=dict(a)),
+                lambda msp, p=n, a=attribs: carry_body(msp.add_line(
+                    (p[0], p[1]), (p[2], p[3]), dxfattribs=dict(a)), entity),
                 layer=layer)
         else:
             cx, cy, radius = ocs.circle_wcs(entity)
@@ -546,15 +548,16 @@ class OffsetTool(Tool):
             if kind == "CIRCLE":
                 command = actions.AddEntityCommand(
                     "OFFSET",
-                    lambda msp, c=center, r=new_r, a=attribs:
-                        msp.add_circle(c, r, dxfattribs=dict(a)),
+                    lambda msp, c=center, r=new_r, a=attribs: carry_body(
+                        msp.add_circle(c, r, dxfattribs=dict(a)), entity),
                     layer=layer)
             else:
                 a0, a1 = ocs.arc_wcs(entity)[3:]
                 command = actions.AddEntityCommand(
                     "OFFSET",
                     lambda msp, c=center, r=new_r, s=a0, en=a1, a=attribs:
-                        msp.add_arc(c, r, s, en, dxfattribs=dict(a)),
+                        carry_body(msp.add_arc(c, r, s, en, dxfattribs=dict(a)),
+                                   entity),
                     layer=layer)
         self.ctx.execute(command)
         self._done_any = True
