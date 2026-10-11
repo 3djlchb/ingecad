@@ -879,7 +879,7 @@ class TransformCommand(Command):
             text = readable and kind in mirrtext.TEXT_TYPES
             before = None
             if (self.upright and kind in ocs.OCS_TYPES) or text:
-                before = e.copy()
+                before = snapshot_entity(e)
                 self._before.append((e, before))
             attribs = ([(a, a.copy()) for a in e.attribs]
                        if readable and kind == "INSERT" else [])
@@ -974,7 +974,7 @@ class CopyEntitiesCommand(Command):
         msp = self.space(document)
         self.removed_handles = [c.dxf.handle for c in self.copies]
         for clone in self.copies:
-            msp.delete_entity(clone)
+            delete_with_dim_block(document, msp, clone)
         self.copies = []
         document.dirty = True
 
@@ -1002,7 +1002,7 @@ class ReplaceEntitiesCommand(Command):
         msp = self.space(document)
         self.removed_handles = [e.dxf.handle for e in self.new_entities]
         for e in self.new_entities:
-            msp.delete_entity(e)
+            delete_with_dim_block(document, msp, e)
         self.new_entities = []
         for e in self.old_entities:
             msp.add_entity(e)
@@ -1193,7 +1193,7 @@ class ExplodeCommand(Command):
                                 for _o, parts in self.pieces for v in parts]
         for original, parts in self.pieces:
             for v in parts:
-                msp.delete_entity(v)
+                delete_with_dim_block(document, msp, v)
             msp.add_entity(original)
         self.pieces = []
         document.dirty = True
@@ -1741,6 +1741,16 @@ def _drop_dim_block(document, name) -> None:
             pass
 
 
+def delete_with_dim_block(document, space, entity) -> None:
+    """Delete ``entity`` from ``space``; a DIMENSION takes its *D block
+    along unless something else still draws it. An undo that deleted
+    copied or exploded dimensions left their blocks for Save to write."""
+    block = entity.dxf.get("geometry", None) \
+        if entity.dxftype() == "DIMENSION" else None
+    space.delete_entity(entity)
+    _drop_dim_block(document, block)
+
+
 def rerender_dimension(document, dim) -> None:
     """Draw a dimension's *D block afresh (a changed style, MATCHPROP, an
     edited property): render, dress the block as AutoCAD writes it, drop
@@ -1829,6 +1839,10 @@ class DimGripCommand(Command):
             self._before = {
                 k: v for k, v in d.dxf.all_existing_dxf_attribs().items()
                 if k not in ("geometry", "handle")}
+            try:
+                self._snapshot = snapshot_entity(d)
+            except Exception:  # noqa: BLE001 -- a never-rendered dimension
+                self._snapshot = None
         old_block = d.dxf.get("geometry", None)
         # Preserve the text rotation the author's CAD chose: this file's
         # style says outside text lies horizontal (dimtoh), which ezdxf's
@@ -1874,6 +1888,12 @@ class DimGripCommand(Command):
         document.dirty = True
 
     def undo(self, document) -> None:
+        # the author's block comes back as it was, not a re-render of it:
+        # a no-op grip and its undo turned "0.50" into "0.5" (E03, 40 of 40)
+        if self._snapshot is not None:
+            _restore_entity(self.dim, self._snapshot)
+            document.dirty = True
+            return
         d = self.dim
         edited_block = d.dxf.get("geometry", None)
         for key in list(d.dxf.all_existing_dxf_attribs()):
@@ -2351,12 +2371,12 @@ class SnapshotCommand(Command):
 
     def __init__(self, entities) -> None:
         self.entities = list(entities)
-        self._before = [e.copy() for e in entities]
+        self._before = [snapshot_entity(e) for e in entities]
         self._after = None
 
     def commit(self, document) -> None:
         """Call after the in-place edit; captures the 'after' state."""
-        self._after = [e.copy() for e in self.entities]
+        self._after = [snapshot_entity(e) for e in self.entities]
         document.dirty = True
 
     def do(self, document) -> None:
@@ -2372,6 +2392,65 @@ class SnapshotCommand(Command):
         document.dirty = True
 
 
+def snapshot_entity(entity):
+    """A copy of ``entity`` that :func:`_restore_entity` can put back whole.
+
+    An ezdxf copy leaves out what ties the entity to the drawing: a
+    DIMENSION's block (``geometry``) and an IMAGE's reactor. Restoring such
+    a copy discarded them -- a dimension drew nothing after the undo of a
+    STRETCH, a property edit or MATCHPROP. They ride along here, the
+    dimension's block with its content, so the undo gives back the author's
+    own drawing of it, not a re-render.
+    """
+    snap = entity.copy()
+    kind = entity.dxftype()
+    if kind == "DIMENSION":
+        name = entity.dxf.get("geometry", None)
+        doc = entity.doc
+        if name and doc is not None and name in doc.blocks:
+            snap._ingecad_block = (
+                name, [e.copy() for e in doc.blocks.get(name)])
+    elif kind == "IMAGE":
+        snap._ingecad_reactor = entity.dxf.get("image_def_reactor_handle", None)
+    return snap
+
+
+def _restore_dimension_block(entity, snapshot) -> None:
+    """Give a restored DIMENSION its snapshot's block, content and all."""
+    doc = entity.doc
+    saved = getattr(snapshot, "_ingecad_block", None)
+    current = entity.dxf.get("geometry", None)
+    if doc is None:
+        return
+    if saved is None:
+        if current is None or current not in doc.blocks:
+            entity.render()             # an old-style snapshot: redraw
+        return
+    name, content = saved
+    if name in doc.blocks:
+        block = doc.blocks.get(name)
+        for e in list(block):
+            block.delete_entity(e)
+    else:
+        block = doc.blocks.new(name)
+        block.block.dxf.flags = 1        # anonymous, as *D blocks are
+    for e in content:
+        block.add_entity(e.copy())
+    entity.dxf.geometry = name
+    from core.annotative import refresh_scale_blocks
+
+    # an annotative dimension's other scales follow its restored state
+    refresh_scale_blocks(entity)
+    if current and current != name and current in doc.blocks:
+        from core.annotative import block_referenced
+
+        if not block_referenced(doc, current):
+            try:
+                doc.blocks.delete_block(current, safe=False)
+            except Exception:
+                pass
+
+
 def _restore_entity(entity, snapshot) -> None:
     """Copy snapshot's DXF attributes back onto entity (keeps its handle)."""
     wanted = snapshot.dxf.all_existing_dxf_attribs()
@@ -2380,7 +2459,7 @@ def _restore_entity(entity, snapshot) -> None:
     # parentless, and the surgical post-undo path skips those -- the object
     # went on hiding until a full regen caught up (the same trap the IMAGE
     # quad hit). The layout still holds it, so only the screen suffered.
-    keep = ("handle", "owner")
+    keep = ("handle", "owner", "geometry", "image_def_reactor_handle")
     # Attributes the edit ADDED have no entry in the snapshot; copying alone
     # would leave them behind (setting style on an entity that used the
     # default survived its own undo this way).
@@ -2397,6 +2476,23 @@ def _restore_entity(entity, snapshot) -> None:
     # grip-editable type at once and comparing a real fingerprint before
     # and after -- worth redoing whenever a type gains grips.
     kind = entity.dxftype()
+    if kind == "DIMENSION":
+        _restore_dimension_block(entity, snapshot)
+    elif kind == "IMAGE":
+        reactor = getattr(snapshot, "_ingecad_reactor", None)
+        if reactor:
+            entity.dxf.image_def_reactor_handle = reactor
+    elif kind == "POLYLINE":
+        # its vertices are entities of their own: a MIRROR or STRETCH undo
+        # put the POLYLINE back and left every vertex where the edit sent it
+        if len(entity.vertices) == len(snapshot.vertices):
+            for vertex, saved in zip(entity.vertices, snapshot.vertices):
+                _restore_entity(vertex, saved)
+    elif kind == "INSERT":
+        # and the attributes of a block reference drifted by every drag
+        if len(entity.attribs) == len(snapshot.attribs):
+            for attrib, saved in zip(entity.attribs, snapshot.attribs):
+                _restore_entity(attrib, saved)
     if kind == "LWPOLYLINE":
         entity.set_points(snapshot.get_points("xyseb"), format="xyseb")
     elif kind == "MTEXT":
@@ -2434,6 +2530,9 @@ def _restore_entity(entity, snapshot) -> None:
             import copy as _copy
 
             entity.paths = _copy.deepcopy(snapshot.paths)
+            # and its pattern lines are object state too: a MIRROR's undo
+            # left them turned while pattern_angle read restored
+            entity.pattern = _copy.deepcopy(snapshot.pattern)
         except Exception:
             pass
 

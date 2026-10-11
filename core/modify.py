@@ -22,7 +22,7 @@ import math
 from ezdxf.math import Vec2
 
 from core import ocs
-from core.actions import (ReplaceEntitiesCommand, _restore_entity,
+from core.actions import (ReplaceEntitiesCommand, _restore_entity, snapshot_entity,
                           transform_entity)
 from core.commands import Command
 
@@ -202,7 +202,12 @@ class StretchCommand(Command):
     name = "STRETCH"
 
     def __init__(self, entities, rects, dx: float, dy: float) -> None:
-        self.entities = list(entities)
+        from core.actions import transformable
+
+        # a proxy or an OLE object stays where it is (as _move_whole has
+        # it), and ezdxf cannot even copy one for the undo: a single Civil 3D
+        # proxy in the crossing aborted the whole STRETCH
+        self.entities = [e for e in entities if transformable(e)]
         #: every entity it touches is known: the display patches them in
         #: place instead of a full regeneration (GeoCad Yaguarete had to
         #: add this; "Regenerando" followed every STRETCH)
@@ -213,7 +218,7 @@ class StretchCommand(Command):
         self._before: list = []
 
     def do(self, document) -> None:
-        self._before = [e.copy() for e in self.entities]
+        self._before = [snapshot_entity(e) for e in self.entities]
         self._dim_edits = []
         for entity in self.entities:
             try:
@@ -1134,7 +1139,7 @@ class MatchPropCommand(Command):
                 and target.dxftype() == "DIMENSION")
 
     def do(self, document) -> None:
-        self._before = [e.copy() for e in self.targets]
+        self._before = [snapshot_entity(e) for e in self.targets]
         self._before_xdata = [
             list(t.get_xdata("ACAD")) if t.has_xdata("ACAD") else None
             for t in self.targets]
@@ -1356,7 +1361,7 @@ class PolylineEditCommand(Command):
         self._before = None
 
     def do(self, document) -> None:
-        self._before = self.entity.copy()
+        self._before = snapshot_entity(self.entity)
         apply_pedit(self.entity, self.operation, self.value)
         document.dirty = True
 
@@ -1565,7 +1570,7 @@ class LengthenCommand(Command):
 
     def do(self, document) -> None:
         entity = self.entities[0]
-        self._before = entity.copy()
+        self._before = snapshot_entity(entity)
         _apply_lengthen(entity, self._which, self._total, self._is_angle)
         document.dirty = True
 
