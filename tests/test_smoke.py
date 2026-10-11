@@ -30,7 +30,7 @@ def test_main_window_constructs_offscreen(qapp):
     win = MainWindow()
     win.show()
     qapp.processEvents()
-    assert win.viewport is win.centralWidget()
+    assert win.viewport.parent() is win.centralWidget()
     # The view transform tracked the widget size.
     assert win.viewport.view.width > 100
     assert win.viewport.view.height > 100

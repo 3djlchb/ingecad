@@ -34,6 +34,7 @@ from core.document import Document, DocumentError
 from core.i18n import tr
 from views import file_dialogs
 from views.command_line import CommandLine
+from views.document_tabs import DocumentTabsMixin
 from views.title_bar import TitleBar
 from core.version import __version__
 from views.viewport import Viewport
@@ -259,7 +260,7 @@ class _InputHold(QWidget):
 SETTING_WINDOW_GEOMETRY = "ui/window_geometry"
 
 
-class MainWindow(QMainWindow):
+class MainWindow(DocumentTabsMixin, QMainWindow):
     # A live viewport regen must fit a frame-ish budget or pan blocks the UI.
     _VP_LIVE_BUDGET_MS = 33.0
 
@@ -370,7 +371,12 @@ class MainWindow(QMainWindow):
         self.setWindowFlag(Qt.FramelessWindowHint, True)
 
         self.viewport = Viewport(self)
-        self.setCentralWidget(self.viewport)
+        # the drawing tabs on top of the canvas (#71): views/document_tabs.py
+        from views.document_tabs import central_widget
+
+        self._tabs_init()
+        host, self._file_tabs = central_widget(self, self.viewport)
+        self.setCentralWidget(host)
 
         self._menu_bar = QMenuBar(self)
         header = QWidget(self)
@@ -1199,6 +1205,7 @@ class MainWindow(QMainWindow):
         self._recent_menu = QMenu(tr("Recent drawings"), self)
         file_menu.addMenu(self._recent_menu)
         self._refresh_recent_menu()
+        item(file_menu, tr("Close"), lambda: self.close_document())
         file_menu.addSeparator()
         item(file_menu, tr("Save"), self.save_document, QKeySequence.Save,
              icon="SAVEAS")
@@ -1561,10 +1568,27 @@ class MainWindow(QMainWindow):
         item(tools_menu, tr("Options..."), self._cmd_options)
 
         # -- Window / Help ----------------------------------------------------
-        window_menu = menu_bar.addMenu(tr("Window"))
+        # Owned by the window (see the recent drawings menu above): it is
+        # refreshed on every open, switch and close of a drawing tab.
+        previous = getattr(self, "_window_documents_menu", None)
+        if previous is not None:
+            try:
+                previous.deleteLater()      # language switch: no leak
+            except RuntimeError:
+                pass
+        window_menu = QMenu(tr("Window"), self)
+        menu_bar.addMenu(window_menu)
+        # AutoCAD's Window menu: Close, Close All, then the open drawings
+        item(window_menu, tr("Close"), lambda: self.close_document())
+        item(window_menu, tr("Close All"), lambda: self.close_all_documents())
+        window_menu.addSeparator()
         item(window_menu, tr("Layers panel"), self.toggle_layers_panel)
         item(window_menu, tr("Command line"),
              lambda: self.command_line.input.setFocus())
+        window_menu.addSeparator()
+        self._window_documents_menu = window_menu
+        self._window_document_actions = []
+        self._refresh_window_menu()
 
         help_menu = menu_bar.addMenu(tr("Help"))
         item(help_menu, tr("Help (ingecad.org)"), self._cmd_help, QKeySequence("F1"))
@@ -2059,7 +2083,9 @@ class MainWindow(QMainWindow):
         bind("Ctrl+\\", self._on_prompt_cancelled)
         bind("Ctrl+PgUp", lambda: self._step_layout(-1))      # previous layout tab
         bind("Ctrl+PgDown", lambda: self._step_layout(1))     # next layout tab
-        bind("Ctrl+Tab", self._next_window)                   # next drawing window
+        bind("Ctrl+Tab", self._next_drawing)                  # next drawing (tab)
+        bind("Ctrl+Shift+Tab", lambda: self._next_drawing(-1))
+        bind("Ctrl+F4", self.close_document)                  # CLOSE
 
     def _toggle_command_line(self) -> None:
         dock = self._command_dock
@@ -2099,6 +2125,13 @@ class MainWindow(QMainWindow):
             return
         index = (names.index(self._active_layout) + delta) % len(names)
         self.switch_layout(names[index])
+
+    def _next_drawing(self, step: int = 1) -> None:
+        """Ctrl+Tab: the next drawing tab; with one tab, the next window."""
+        if len(self._sessions) > 1:
+            self.step_document(step)
+        else:
+            self._next_window()
 
     def _next_window(self) -> None:
         """Ctrl+Tab: the next open drawing window."""
@@ -2809,6 +2842,17 @@ class MainWindow(QMainWindow):
         """
         self.open_path(path, as_template=True)
 
+    def _refresh_document_panels(self) -> None:
+        """Every panel that shows the drawing, after the drawing changed
+        under it (a tab switch)."""
+        for name in ("_layers_panel", "_styles_panel", "_properties_panel",
+                     "_xrefs_panel"):
+            panel = getattr(self, name, None)
+            if panel is not None:
+                panel.refresh()
+        if getattr(self, "_props_toolbar", None) is not None:
+            self._refresh_props_toolbar()
+
     def _drop_block_session(self) -> None:
         """The document a Block Editor session belongs to is being replaced.
 
@@ -2826,11 +2870,9 @@ class MainWindow(QMainWindow):
     def new_document(self, template: str | None = None) -> None:
         from core import templates as templates_mod
 
-        if not self.maybe_save_changes():
-            return
-        self._drop_block_session()
-        self.document = templates_mod.new_document(
-            template or self.startup_template())
+        document = templates_mod.new_document(template or self.startup_template())
+        self._tab_for_new_document(document)      # a tab of its own (#71)
+        self.document = document
         self._autosave_arm()          # a new drawing, a new countdown
         self._layout_scenes.clear()   # scenes of the previous drawing
         self._active_layout = "Model"
@@ -2850,6 +2892,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "_xrefs_panel", None) is not None:
             self._xrefs_panel.refresh()    # not the last drawing's references
         self.setWindowTitle(f"IngeCAD — {tr('Untitled')}")
+        self._refresh_file_tabs()
 
     # -- classic toolbars (Draw left, Modify top) ------------------------------
     def _build_toolbars(self) -> None:
@@ -3755,7 +3798,16 @@ class MainWindow(QMainWindow):
             if scene is not None:
                 self._regen_ms[layout] = worker.duration_ms
         if document is not self.document:
-            return          # another file was opened meanwhile
+            # another drawing's tab: keep the scene for when it comes back,
+            # and build the one in view if it asked while this ran
+            for session in self._sessions:
+                if (session.document is document and scene is not None
+                        and revision == document.revision
+                        and layout == session.active_layout):
+                    session.layout_scenes[layout] = (revision, scene)
+            if self._regen_rerun and self.document is not None:
+                self._start_regen()
+            return
         stale = (self._regen_rerun
                  or scene is None
                  or revision != self.document.revision
@@ -3824,6 +3876,8 @@ class MainWindow(QMainWindow):
         d.register("UNDO", self._cmd_undo)
         d.register("REDO", self._cmd_redo)
         d.register("OPEN", lambda *a: self._open_dialog())
+        d.register("CLOSE", lambda *a: self.close_document())
+        d.register("CLOSEALL", lambda *a: self.close_all_documents())
         d.register("SAVEAS", lambda *a: self._save_as_dialog())
         d.register("QUIT", lambda *a: self.close())
         d.register("EXIT", lambda *a: self.close())
@@ -5744,7 +5798,7 @@ class MainWindow(QMainWindow):
         if not self._autosave_idle():
             self._autosave_timer.start(30 * 1000)   # busy: ask again shortly
             return
-        sv_path, info_path = autosave.autosave_paths(self.document.path)
+        sv_path, info_path = self._autosave_paths()
         worker = _AutoSaveWorker(self.document, sv_path, info_path)
         worker.done.connect(self._on_autosave_done)
         self._autosave_worker = worker
@@ -5785,19 +5839,36 @@ class MainWindow(QMainWindow):
         if self.document is None:
             return
         self._autosave_gate()
-        autosave.discard(*autosave.autosave_paths(self.document.path))
+        autosave.discard(*self._autosave_paths())
+
+    def _autosave_paths(self, session=None):
+        """This drawing's .sv$ pair; each tab its own (#71)."""
+        from core import autosave
+
+        session = session or self._session
+        document = session.document if session is not None else self.document
+        slot = session.slot if session is not None else 1
+        return autosave.autosave_paths(document.path, slot)
+
+    def _autosave_discard_all(self) -> None:
+        from core import autosave
+
+        self._autosave_discard()
+        for session in self._sessions:
+            if session is not self._session and session.document is not None:
+                autosave.discard(*self._autosave_paths(session))
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         if getattr(self, "_save_worker", None) is not None:
             event.ignore()             # the window closes after the save
             return
-        if not self.maybe_save_changes():
+        if not self.maybe_save_all():      # every open drawing (#71)
             event.ignore()
             return
         self._drain_workers()
         # A normal exit leaves nothing behind: what the Drawing Recovery
         # Manager lists is, by definition, what a crash left.
-        self._autosave_discard()
+        self._autosave_discard_all()
         if self.isVisible():                 # a never-shown window has none
             QSettings().setValue(SETTING_WINDOW_GEOMETRY, self.saveGeometry())
         event.accept()
@@ -5958,8 +6029,6 @@ class MainWindow(QMainWindow):
         ``as_template`` keeps the content and drops the origin, so the drawing
         becomes an unnamed new one.
         """
-        if not self.maybe_save_changes():
-            return
         self._open_as_template = bool(as_template)
         if path.suffix.lower() == ".dwg":
             from formats.dwg_bridge import have_dwg_support
@@ -6019,7 +6088,7 @@ class MainWindow(QMainWindow):
             recent_mod.add(document.path)
             self._refresh_recent_menu()
         self._open_as_template = False
-        self._drop_block_session()
+        self._tab_for_new_document(document)      # a tab of its own (#71)
         self.document = document
         self._autosave_arm()          # a new drawing, a new countdown
         self._layout_scenes.clear()   # scenes of the previous drawing
@@ -6045,6 +6114,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "_props_toolbar", None) is not None:
             self._refresh_props_toolbar()
         self.setWindowTitle(f"IngeCAD — {document.name}")
+        self._refresh_file_tabs()
         if scene.layout_name:
             # Saved on a layout tab ($TILEMODE) or empty modelspace fallback.
             self.command_line.echo(

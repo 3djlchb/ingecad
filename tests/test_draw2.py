@@ -1076,21 +1076,37 @@ def test_a_cancelled_save_as_keeps_the_window_open(qapp, monkeypatch):
         win.close()
 
 
-def test_open_and_new_are_guarded_too(qapp, monkeypatch):
+def test_new_keeps_a_modified_drawing_open_and_close_asks(qapp, monkeypatch):
+    """New opens a tab of its own (#71), so the modified drawing stays open
+    with its changes and nothing is asked; CLOSE on it asks, and Cancel
+    keeps it."""
     from PySide6.QtWidgets import QMessageBox
 
     win = _editor_window(qapp)
     try:
         win.document.dirty = True
         doc = win.document
-        monkeypatch.setattr(QMessageBox, "warning",
-                            lambda *a, **k: QMessageBox.Cancel)
+        asked = []
+
+        def cancel(*a, **k):
+            asked.append(a)
+            return QMessageBox.Cancel
+
+        monkeypatch.setattr(QMessageBox, "warning", cancel)
         win.new_document("mm")
-        assert win.document is doc            # Cancel kept the drawing
-        win.open_path(Path("no-importa.dxf"))
-        assert win.document is doc
+        assert not asked and win.document is not doc
+        assert [s.document for s in win.document_sessions()] == [doc, win.document]
+        assert doc.dirty
+        win.dispatcher.submit("CLOSE")          # the new one: nothing to ask
+        assert not asked and win.document is doc
+        win.dispatcher.submit("CLOSE")          # the modified one asks
+        assert asked and win.document is doc    # and Cancel keeps it
+        assert len(win.document_sessions()) == 1
+        win.dispatcher.submit("CLOSEALL")       # Cancel stops CLOSEALL too
+        assert len(asked) == 2 and win.document is doc
     finally:
-        win.document.dirty = False
+        for session in win.document_sessions():
+            session.document.dirty = False
         win.close()
 
 

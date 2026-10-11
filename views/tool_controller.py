@@ -459,7 +459,10 @@ class ToolController(QObject):
         self._merge_timer.timeout.connect(self._run_deferred_regen)
 
     # -- document lifecycle ----------------------------------------------------
-    def attach_document(self, document, flatten: Optional[float] = None) -> None:
+    def attach_document(self, document, flatten: Optional[float] = None,
+                        keep_history: bool = False) -> None:
+        """Work on ``document`` from now on. ``keep_history``: a drawing tab
+        coming back keeps its undo and redo (#71)."""
         self.snap_engine = SnapEngine(document)
         self._model_snap_engine = None
         self._through_vp = {}
@@ -491,7 +494,8 @@ class ToolController(QObject):
         # the new document.
         self._pending_render = []
         self.window.history.document = document
-        self.window.history.clear()
+        if not keep_history:
+            self.window.history.clear()
         self._refresh_overlay()
 
     def _start_warmer(self, document) -> None:

@@ -1985,5 +1985,9 @@
   "Select object to extend or shift-select to trim or [Boundary edges/mOde]:": "Designe objeto que alargar o pulse Mayús y designe para recortar o [aristas de Borde(B)/mOdo(O)]:",
   "Enter a trim mode option [Quick/Standard] <{mode}>:": "Indique una opción de modo de recorte [Rápido(Q)/Estándar(S)] <{mode}>:",
   "Enter an extend mode option [Quick/Standard] <{mode}>:": "Indique una opción de modo de alargamiento [Rápido(Q)/Estándar(S)] <{mode}>:",
-  "To make them annotative: Properties > Annotative > Yes.": "Para hacerlos anotativos: Propiedades > Anotativo > Sí."
+  "To make them annotative: Properties > Annotative > Yes.": "Para hacerlos anotativos: Propiedades > Anotativo > Sí.",
+  "Close All": "Cerrar todo",
+  "Close All Other Drawings": "Cerrar todos los demás dibujos",
+  "Copy Full File Path": "Copiar ruta completa del archivo",
+  "Open File Location": "Abrir ubicación del archivo"
 }
