@@ -98,3 +98,41 @@ def test_undoing_a_copy_leaves_no_dimension_block_behind():
     assert len(_dim_blocks(document)) > len(before)
     history.undo()
     assert _dim_blocks(document) == before
+
+
+def test_explode_shows_the_attribute_definitions():
+    """"Exploding a block that contains attributes deletes the attribute
+    values and redisplays the attribute definitions" (EXPLODE); the tags
+    vanished with the values."""
+    document = Document.new()
+    msp = document.modelspace()
+    block = document.doc.blocks.new("TAG", base_point=(1, 0))
+    block.add_line((0, 0), (1, 0))
+    block.add_attdef("NUM", (0, 1), dxfattribs={"height": 0.5})
+    insert = msp.add_blockref("TAG", (5, 5), dxfattribs={"rotation": 90})
+    insert.add_auto_attribs({"NUM": "42"})
+    history = History(document)
+    history.execute(actions.explode_entities([insert]))
+    attdefs = [e for e in msp if e.dxftype() == "ATTDEF"]
+    assert [a.dxf.tag for a in attdefs] == ["NUM"]
+    assert tuple(round(v, 9) for v in attdefs[0].dxf.insert)[:2] == (4, 4)
+    assert not [e for e in msp if e.dxftype() == "ATTRIB"]
+    history.undo()
+    assert [e.dxftype() for e in msp] == ["INSERT"]
+
+
+def test_a_clipped_viewport_takes_its_boundary_along():
+    document = Document.new()
+    sheet = document.doc.layouts.get("Layout1")
+    boundary = sheet.add_lwpolyline([(10, 10), (60, 10), (60, 40), (10, 40)],
+                                    close=True)
+    vp = sheet.add_viewport(center=(35, 25), size=(50, 30),
+                            view_center_point=(0, 0), view_height=30)
+    vp.dxf.clipping_boundary_handle = boundary.dxf.handle
+    vp.dxf.flags = vp.dxf.flags | 0x10000
+    assert vp.has_extended_clipping_path
+    history = History(document)
+    history.execute(actions.move_entities([vp], 100, 0))
+    assert boundary.get_points("xy")[0] == (110, 10)
+    history.undo()
+    assert boundary.get_points("xy")[0] == (10, 10)

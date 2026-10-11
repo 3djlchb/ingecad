@@ -810,6 +810,28 @@ def transform_entity(entity, matrix) -> None:
         transform_viewport(entity, matrix)
 
 
+def _with_clip_boundaries(entities) -> list:
+    """``entities`` plus the clipping boundary of every clipped VIEWPORT
+    among them: AutoCAD moves the two together. Moving the viewport alone
+    left its boundary -- the shape the sheet is clipped to -- behind."""
+    seen = {id(e) for e in entities}
+    out = list(entities)
+    for e in entities:
+        if e.dxftype() != "VIEWPORT":
+            continue
+        try:
+            if not e.has_extended_clipping_path or e.doc is None:
+                continue
+            boundary = e.doc.entitydb.get(e.dxf.clipping_boundary_handle)
+        except Exception:  # noqa: BLE001 -- a dangling handle clips nothing
+            continue
+        if boundary is not None and boundary.is_alive \
+                and id(boundary) not in seen:
+            seen.add(id(boundary))
+            out.append(boundary)
+    return out
+
+
 def transformable(entity) -> bool:
     """Can ezdxf move, rotate or copy this object at all?"""
     from ezdxf.entities.dxfgfx import DXFGraphic
@@ -856,7 +878,8 @@ class TransformCommand(Command):
         #: Objects this matrix cannot move (a rotated viewport). Kept so the
         #: UI can say so instead of the command half-working.
         self.skipped = [e for e in entities if not can_transform(e, matrix)]
-        self.entities = [e for e in entities if can_transform(e, matrix)]
+        self.entities = _with_clip_boundaries(
+            [e for e in entities if can_transform(e, matrix)])
         self.matrix = matrix
         #: Flip entities the matrix leaves with a (0, 0, -1) extrusion back
         #: to +Z (MIRROR). The flip is not part of the matrix, so the OCS
@@ -1207,6 +1230,14 @@ class ExplodeCommand(Command):
             for v in e.virtual_entities():
                 msp.add_entity(v)
                 parts.append(v)
+            if e.dxftype() == "INSERT":
+                # "Exploding a block that contains attributes deletes the
+                # attribute values and redisplays the attribute definitions"
+                # (EXPLODE); virtual_entities() leaves the ATTDEFs out, so
+                # the tags vanished with the values
+                for attdef in _exploded_attdefs(e):
+                    msp.add_entity(attdef)
+                    parts.append(attdef)
             msp.unlink_entity(e)
             self.pieces.append((e, parts))
         document.dirty = True
@@ -1221,6 +1252,26 @@ class ExplodeCommand(Command):
             msp.add_entity(original)
         self.pieces = []
         document.dirty = True
+
+
+def _exploded_attdefs(insert) -> list:
+    """The block's attribute definitions where the reference shows them."""
+    doc = insert.doc
+    name = insert.dxf.get("name", None)
+    if doc is None or not name or name not in doc.blocks:
+        return []
+    matrix = insert.matrix44()
+    out = []
+    for e in doc.blocks.get(name):
+        if e.dxftype() != "ATTDEF":
+            continue
+        try:
+            copy = e.copy()
+            copy.transform(matrix)
+        except Exception:  # noqa: BLE001 -- one odd definition stays out
+            continue
+        out.append(copy)
+    return out
 
 
 def explode_entities(entities) -> ExplodeCommand:
