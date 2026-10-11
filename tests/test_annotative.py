@@ -178,20 +178,29 @@ def test_a_viewport_at_another_annotation_scale_keeps_the_bake(qapp):
         win.close()
 
 
-def test_save_as_dwg_says_which_scales_it_cannot_keep(tmp_path):
-    """No DWG writer IngeCAD ships keeps the scale representations yet
-    (LibreDWG's DXF importer drops them): the save must say so, and not
-    when there is nothing to lose."""
-    from core.document import Document
+def test_save_as_dwg_warns_only_for_scales_it_cannot_keep(tmp_path):
+    """The bundled LibreDWG keeps text and dimension scale representations
+    since the vendor patch of 2026-10-10 (they come back from the DWG,
+    checked in test_annotative_viewports): a save of those says nothing.
+    Kinds not proven yet -- a colleague's annotative blocks, multileaders --
+    still warn, and nothing is said when there is nothing to lose."""
+    from core.document import Document, _survives_dwg
     from formats.dwg_bridge import find_dxf2dwg
 
     if find_dxf2dwg() is None:
         pytest.skip("LibreDWG not available")
     doc, *_ = _drawing()
     _engine, warnings = Document(doc).save_as(tmp_path / "multi.dwg")
-    assert any("annotative" in w for w in warnings)
+    assert not any("annotative" in w for w in warnings), warnings
 
     plain = ezdxf.new("R2018")
     plain.modelspace().add_line((0, 0), (1, 1))
     _engine, warnings = Document(plain).save_as(tmp_path / "plain.dwg")
     assert not any("annotative" in w for w in warnings)
+
+    block = plain.blocks.new("B")
+    block.add_line((0, 0), (1, 0))
+    insert = plain.modelspace().add_blockref("B", (0, 0))
+    assert not _survives_dwg(insert)
+    text = plain.modelspace().add_text("x")
+    assert _survives_dwg(text)

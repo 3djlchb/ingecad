@@ -3,6 +3,49 @@
 IngeCAD embeds LibreDWG's `dwg2dxf`/`dxf2dwg` as satellite converters
 (`vendor/libredwg/bin`, gitignored).
 
+## 2026-10-10: annotative scales and viewports survive Save as DWG
+
+Appended to `current/ingecad-vendor-0.14.8597.patch`. Found making Rafael's
+annotative dimensions measure the same in a 1:1 and a 2:1 viewport, then
+saving as DWG (he works in DWG): every scale came back lost.
+
+- **`object_alias` tested `ACAD_`** in its `ACDB_*OBJECTCONTEXTDATA_CLASS`
+  branch -- its own comment says `ACDB_` -- so `dxf2dwg` logged "Unhandled 0
+  ACDB_..._CLASS (objects)" for every context object and dropped it: TEXT,
+  MTEXT and dimension scale representations all vanished on DXF -> DWG.
+- **A dimension context's common body** (`AcDbDimensionObjectContextData`) is
+  the embedded `Dwg_OCD_Dimension`, which the generic field search does not
+  see: with the prefix right, its `2` (the `*D` block, by name) aborted the
+  whole import. `dxf_set_ocd_dimension` sets those groups.
+- **RADIM and DMDIM context classes** moved out of `DEBUG_CLASSES` and made
+  stable like ALDIM (#1424): they are ALDIM's body plus their arc points.
+  No corpus drawing carries one; ODA reads IngeCAD's back.
+- **Pre-r2004 viewports were all off.** A viewport is on or off in the
+  `VX_TABLE_RECORD` `in_dxf` makes for it, whose `is_on` was never set (a
+  commented-out line): every sheet saved as r2000 opened in ODA (and AutoCAD)
+  with its viewports off. Now from the DXF 68 status (0 off, else on).
+- **A context's own 70 became the class version.** The 70 that follows the
+  body's subclass (MTEXT attachment, ...) overwrote `class_version` of
+  `AcDbObjectContextData`. `dxf_set_context_70` sends it to the body.
+- **MTEXT context columns.** `72` counts the `46` heights that follow; the
+  generic search warned "Ignore ... column_heights VECTOR" and kept the
+  count, so the writer read the heights from NULL and ODA segfaulted on the
+  DWG of a real bridge plan (the A/B sweep below caught it). Now the vector
+  is allocated from 72 and filled from each 46.
+
+ODA as the judge: IngeCAD's sheet with linear, aligned, radius and diameter
+dimensions at 1:1 and 2:1 goes through `dxf2dwg` and reads back with no audit
+error, every scale of every dimension with its own block, and the viewports
+on (a viewport whose 68 is 0 stays off). Through IngeCAD's own save and open
+the 1:1 and 2:1 viewports draw the same text (1014/1014 px). `make check`
+270/0; `dwg_fuzz.py run --count 500` identical seed by seed to the build
+without it. A/B sweep of 120 corpus drawings through IngeCAD's save path
+(load_dwg -> intermediate DXF -> old and new `dxf2dwg` -> ODA): 120/120 the
+same (102 read by both, 15 rejected by both, 3 IngeCAD cannot open); before
+the columns fix one bridge plan crashed ODA with the new build only.
+Upstream branches in `~/Proyectos/externos/libredwg`:
+`in_dxf-dim-context-data` and `in_dxf-r2000-viewport-on` (not pushed yet).
+
 ## 2026-10-08: xref blocks survive Save as DWG (IngeCAD #66)
 
 Appended to `current/ingecad-vendor-0.14.8597.patch`. An r13+ DXF has no 70

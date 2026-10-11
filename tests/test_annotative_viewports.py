@@ -164,3 +164,30 @@ def test_the_scale_blocks_survive_save_and_reopen(qapp, tmp_path):
             assert name in again.doc.blocks, f"{rep.scale.name}: {name} lost"
     at_1, at_2 = _red_pixels(again)
     assert at_2 / at_1 == pytest.approx(1.0, abs=0.12)
+
+
+def _have_libredwg() -> bool:
+    from formats.dwg_bridge import find_dxf2dwg
+
+    return find_dxf2dwg() is not None
+
+
+@pytest.mark.skipif(not _have_libredwg(), reason="LibreDWG not available")
+def test_the_scales_survive_save_as_dwg(qapp, tmp_path):
+    """Rafael works in DWG. LibreDWG's DXF importer dropped every context
+    object (object_alias tested ACAD_ for ACDB_ names, and a dimension's
+    embedded body aborted the import): after Save as DWG the dimensions came
+    back with no scale and the 2:1 viewport drew them three times bigger.
+    The vendor patch of 2026-10-10 imports them; checked here through
+    IngeCAD's own save and open."""
+    from formats.dwg_bridge import load_dwg
+
+    document, _dims = _sheet("born")
+    path = tmp_path / "anno.dwg"
+    _engine, warnings = document.save_as(path)
+    assert not warnings, warnings
+    again = load_dwg(path)
+    for dim in again.doc.modelspace().query("DIMENSION"):
+        assert {r.scale.name for r in A.representations(dim)} == {"1:1", "2:1"}
+    at_1, at_2 = _red_pixels(again)
+    assert at_1 > 200 and at_2 / at_1 == pytest.approx(1.0, abs=0.12)

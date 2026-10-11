@@ -252,16 +252,27 @@ class Document:
         self.dirty = False
 
 
+def _survives_dwg(entity) -> bool:
+    """Do this object's scale representations come back from a DWG? The
+    bundled LibreDWG imports text and dimension contexts since 0.6.7
+    (vendor patch of 2026-10-10, checked through ODA); other kinds --
+    a colleague's multileaders, hatches, blocks -- are not proven yet."""
+    kind = entity.dxftype()
+    if kind in ("TEXT", "MTEXT"):
+        return True
+    return kind == "DIMENSION" and (entity.dimtype & 7) in (0, 1, 3, 4)
+
+
 def _annotative_save_warnings(doc) -> list[str]:
-    """No DWG writer IngeCAD ships keeps an object's scale representations
-    yet (LibreDWG's DXF importer drops them), so a save that loses them says
-    so -- and DXF, which keeps them all, is the way out."""
+    """A save that would lose scale representations says so -- and DXF,
+    which keeps them all, is the way out."""
     from core import annotative
     from core.i18n import tr
 
     count = sum(1 for layout in doc.layouts for e in layout
                 if annotative.is_annotative(e)
-                and len(annotative.representations(e)) > 1)
+                and len(annotative.representations(e)) > 1
+                and not _survives_dwg(e))
     if not count:
         return []
     return [tr("{count} annotative objects keep only their default scale "
