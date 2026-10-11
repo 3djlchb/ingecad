@@ -154,6 +154,10 @@ class Document:
                 doc, _auditor = recover.readfile(path)
             except (DXFStructureError, ValueError) as exc:
                 raise DocumentError(f"not a readable DXF file: {exc}") from exc
+        # sheets IngeCAD wrote before 0.6.7 lack AutoCAD's main viewport
+        from core.layouts import repair_missing_main_viewports
+
+        repair_missing_main_viewports(doc)
         return cls(doc, path)
 
     @property

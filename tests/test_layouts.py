@@ -310,14 +310,14 @@ def test_add_viewport_command_undo():
         doc, "Layout1", (20, 20), (220, 160))
     history.execute(command)
     psp = doc.doc.layouts.get("Layout1")
-    vps = [e for e in psp if e.dxftype() == "VIEWPORT"]
+    vps = [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]
     assert len(vps) == 1
     assert vps[0].dxf.width == pytest.approx(200.0)
     history.undo()
-    assert not [e for e in psp if e.dxftype() == "VIEWPORT"]
+    assert not [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]
     assert command.removed_handles
     history.redo()
-    assert len([e for e in psp if e.dxftype() == "VIEWPORT"]) == 1
+    assert len([e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]) == 1
 
 
 def test_model_fit_view_aspect():
@@ -370,13 +370,13 @@ def test_mview_tool_flow():
     tool.on_point((220.0, 160.0))
     assert finished and executed
     psp = doc.doc.layouts.get("Layout1")
-    assert len([e for e in psp if e.dxftype() == "VIEWPORT"]) == 1
+    assert len([e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]) == 1
 
     # Fit option creates a printable-area viewport
     tool2 = MviewTool(ctx)
     tool2.start()
     assert tool2.on_option("F")
-    assert len([e for e in psp if e.dxftype() == "VIEWPORT"]) == 2
+    assert len([e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]) == 2
 
 
 def test_mview_alias():
@@ -409,7 +409,7 @@ def test_xp_zoom_sets_exact_scale_and_undoes():
     history.execute(layout_ops.viewport_from_corners(
         doc, "Layout1", (0, 0), (200, 100)))
     psp = doc.doc.layouts.get("Layout1")
-    vp = [e for e in psp if e.dxftype() == "VIEWPORT"][0]
+    vp = [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1][0]
     before = float(vp.dxf.view_height)
 
     history.execute(layout_ops.xp_zoom_command(vp, 0.01))   # ZOOM 1/100XP
@@ -432,7 +432,7 @@ def test_viewport_fit_command_recenters():
     history.execute(layout_ops.viewport_from_corners(
         doc, "Layout1", (0, 0), (200, 100)))
     psp = doc.doc.layouts.get("Layout1")
-    vp = [e for e in psp if e.dxftype() == "VIEWPORT"][0]
+    vp = [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1][0]
     history.execute(layout_ops.xp_zoom_command(vp, 2.0))    # zoom way in
     history.execute(layout_ops.viewport_fit_command(doc, vp))
     assert (vp.dxf.view_center_point.x, vp.dxf.view_center_point.y) \
@@ -543,16 +543,16 @@ def test_remove_viewport_command_undo():
     vp.dxf.layer = "0"
     command = layout_ops.RemoveViewportCommand(vp, "Layout1")
     history.execute(command)
-    assert not [e for e in psp if e.dxftype() == "VIEWPORT"]
+    assert not [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]
     assert command.removed_handles
     history.undo()
-    vps = [e for e in psp if e.dxftype() == "VIEWPORT"]
+    vps = [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]
     assert len(vps) == 1
     assert (vps[0].dxf.center.x, vps[0].dxf.center.y) == (100.0, 100.0)
     assert float(vps[0].dxf.view_height) == 70.0
     assert vps[0].dxf.layer == "0"
     history.redo()
-    assert not [e for e in psp if e.dxftype() == "VIEWPORT"]
+    assert not [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]
 
 
 # -- paper-space selection through the real controller -------------------------
@@ -635,9 +635,9 @@ def test_paper_delete_selection_removes_viewport(qapp):
     t.on_click(60.0, 100.0)
     assert t.delete_selection()
     psp = win.document.doc.layouts.get("Layout1")
-    assert not [e for e in psp if e.dxftype() == "VIEWPORT"]
+    assert not [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]
     win._cmd_undo()
-    assert len([e for e in psp if e.dxftype() == "VIEWPORT"]) == 1
+    assert len([e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]) == 1
     win.close()
 
 
@@ -795,7 +795,7 @@ def test_page_setup_command_writes_fields_and_spares_viewports():
     assert psp.dxf.paper_size.startswith("ISO_A4_")
     assert psp.dxf.plot_rotation == 0
     # THE invariant: the colleague's viewports survive untouched
-    vps = [e for e in psp if e.dxftype() == "VIEWPORT"]
+    vps = [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1]
     assert len(vps) == 1 and vps[0] is vp
     assert (vp.dxf.view_center_point.x, vp.dxf.view_center_point.y,
             float(vp.dxf.view_height)) == view_before
@@ -891,7 +891,7 @@ def test_page_setup_full_options_roundtrip():
     # limits account for the plot offset
     assert tuple(dxf.limmin)[:2] == (-15.0, -9.0)
     # the viewport still survives the full write
-    assert [e for e in psp if e.dxftype() == "VIEWPORT"] == [vp]
+    assert [e for e in psp if e.dxftype() == "VIEWPORT" and e.dxf.id != 1] == [vp]
     history.undo()
     assert int(dxf.plot_type) == 5             # back to schema default
 

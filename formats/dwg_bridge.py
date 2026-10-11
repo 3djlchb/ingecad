@@ -290,7 +290,7 @@ def load_dwg(dwg_path: Path, progress=None):
     from core.document import Document
 
     from core.encoding import decode_escapes_in_document, repair_invalid_defaults
-    from core.layouts import repair_viewport_status
+    from core.layouts import repair_missing_main_viewports, repair_viewport_status
 
     dwg_path = Path(dwg_path)
     dxf_path = dwg_to_dxf(dwg_path)
@@ -312,6 +312,7 @@ def load_dwg(dwg_path: Path, progress=None):
     # entmode and gets it wrong for every layout but the one that was current
     # on save, which left those sheets blank.
     repair_viewport_status(document.doc)
+    repair_missing_main_viewports(document.doc)
     document.path = dwg_path
     if len(document.doc.modelspace()) > 0:
         return document
