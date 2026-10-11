@@ -121,3 +121,91 @@ def test_halves_round_up_and_a_bare_dimpost_is_a_suffix():
         .render().dimension
     _grip_in_place(document, dim)
     assert _texts(d, dim) == ["2.50 m"]
+
+
+def _plain_dim(document, style="Plain", **style_attribs):
+    attribs = {"dimdec": 2, "dimzin": 0, "dimdsep": ord(".")}
+    attribs.update(style_attribs)
+    document.doc.dimstyles.new(style, dxfattribs=attribs)
+    return document.modelspace().add_linear_dim(
+        base=(0, 2), p1=(0, 0), p2=(10, 0), dimstyle=style).render().dimension
+
+
+def _block_kinds(document, dim):
+    return [e.dxftype() for e in document.doc.blocks.get(dim.dxf.geometry)]
+
+
+def test_edits_that_aborted_now_redraw():
+    """A "_NONE" arrow with no block of the name (1314 dimensions in 8
+    plans) and an older block whose text is a TEXT both made the grip edit
+    raise."""
+    document = Document.new()
+    dim = _plain_dim(document, dimblk="_NONE")
+    _grip_in_place(document, dim)
+    old = _plain_dim(document, "Old")
+    block = document.doc.blocks.get(old.dxf.geometry)
+    for e in [e for e in block if e.dxftype() == "MTEXT"]:
+        block.delete_entity(e)
+    block.add_text("10.00", dxfattribs={"insert": (5, 2), "height": 1})
+    _grip_in_place(document, old)
+    assert _texts(document.doc, old) == ["10.00"]
+
+
+def test_a_suppressed_dimension_line_takes_its_arrows_along():
+    document = Document.new()
+    dim = _plain_dim(document, dimsd1=1, dimsd2=1)
+    _grip_in_place(document, dim)
+    assert "INSERT" not in _block_kinds(document, dim)
+
+
+def test_hand_placed_text_stays_where_the_author_put_it():
+    """AutoCAD keeps group 11 on the line and offsets the text by DIMTAD;
+    ezdxf centred it on group 11, so 2013 of 2829 hand-placed labels of a
+    corpus sample fell onto their line at the first grip."""
+    document = Document.new()
+    dim = _plain_dim(document, dimtad=1)
+    dim.dxf.dimtype = int(dim.dxf.dimtype) | 128
+    block = document.doc.blocks.get(dim.dxf.geometry)
+    text = next(e for e in block if e.dxftype() == "MTEXT")
+    text.dxf.insert = (3.0, 3.5, 0.0)          # where the author placed it
+    _grip_in_place(document, dim)
+    block = document.doc.blocks.get(dim.dxf.geometry)
+    text = next(e for e in block if e.dxftype() == "MTEXT")
+    assert tuple(text.dxf.insert)[:2] == pytest.approx((3.0, 3.5))
+
+
+def test_a_mirrored_dimension_stays_put_and_undo_gives_it_back():
+    """Extrusion (0, 0, -1): the redrawn block landed at -X (477 of 477
+    dimensions of a fence plan)."""
+    from ezdxf import bbox
+
+    document = Document.new()
+    dim = _plain_dim(document)
+    dim.dxf.defpoint = (100, 2, 0)
+    dim.dxf.defpoint2 = (100, 0, 0)
+    dim.dxf.defpoint3 = (110, 0, 0)
+    dim.render()
+    # the same dimension as AutoCAD's MIRROR stores it
+    mid = dim.dxf.text_midpoint
+    dim.dxf.text_midpoint = (-mid.x, mid.y, -mid.z)
+    dim.dxf.angle = 180.0 - float(dim.dxf.get("angle", 0.0))
+    dim.dxf.extrusion = (0, 0, -1)
+    history = History(document)
+    p = dim.dxf.defpoint
+    history.execute(DimGripCommand(dim, "defpoint", (p.x, p.y)))
+    box = bbox.extents([dim])
+    assert 99 < box.center.x < 111
+    assert _texts(document.doc, dim) == ["10.00"]
+    history.undo()
+    assert tuple(dim.dxf.extrusion) == (0, 0, -1)
+
+
+def test_a_grip_keeps_the_height_of_the_point_it_moves():
+    document = Document.new()
+    msp = document.modelspace()
+    dim = msp.add_radius_dim(center=(0, 0, 500), radius=1.8, angle=30) \
+        .render().dimension
+    point = dim.dxf.defpoint4
+    History(document).execute(
+        DimGripCommand(dim, "defpoint4", (point.x, point.y)))
+    assert dim.dxf.defpoint4.z == 500

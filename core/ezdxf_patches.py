@@ -37,6 +37,8 @@ def apply() -> None:
     _patch_dimrnd_zero()
     _patch_fixed_height_dimension_text()
     _patch_dimension_number_format()
+    _patch_underscored_arrow_names()
+    _patch_suppressed_dimension_line_arrows()
     _patch_dms_angular_text()
 
 
@@ -217,6 +219,54 @@ def _patch_dimension_number_format() -> None:
     format_text._ingecad_patch = True
     dim_base.format_text = format_text
     dim_base.apply_dimpost = apply_dimpost
+
+
+def _patch_underscored_arrow_names() -> None:
+    """``_NONE`` (or any standard arrow written with AutoCAD's leading
+    underscore) is that arrow even when the drawing has no block of the name.
+
+    ezdxf looked for a user block called "_NONE", found none, and raised
+    "Undefined block": every edit of 1314 dimensions in 8 corpus plans
+    aborted. When the block exists it is still used as it is.
+    """
+    from ezdxf.render.arrows import ARROWS
+    from ezdxf.render.dim_base import BaseDimensionRenderer
+
+    if getattr(BaseDimensionRenderer.add_blockref, "_ingecad_patch", False):
+        return
+    original = BaseDimensionRenderer.add_blockref
+
+    def add_blockref(self, name, *args, **kwargs):
+        if name and name not in ARROWS and name.startswith("_") \
+                and not self.geometry.has_block(name) and name[1:] in ARROWS:
+            name = name[1:]
+        return original(self, name, *args, **kwargs)
+
+    add_blockref._ingecad_patch = True
+    BaseDimensionRenderer.add_blockref = add_blockref
+
+
+def _patch_suppressed_dimension_line_arrows() -> None:
+    """DIMSD1/DIMSD2 suppress "the first dimension line and arrowhead"
+    (DIMSD1, Command Reference); ezdxf dropped the line and kept drawing the
+    arrow, so a redrawn dimension sprouted ticks its author had suppressed
+    (arrow-count mismatches 2980 -> 112 over a corpus sample with this)."""
+    from ezdxf.render.dim_base import BaseDimensionRenderer
+
+    if getattr(BaseDimensionRenderer.__init__, "_ingecad_patch", False):
+        return
+    original = BaseDimensionRenderer.__init__
+
+    def __init__(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        line = getattr(self, "dimension_line", None)
+        arrows = getattr(self, "arrows", None)
+        if line is not None and arrows is not None:
+            arrows.suppress1 = arrows.suppress1 or line.suppress1
+            arrows.suppress2 = arrows.suppress2 or line.suppress2
+
+    __init__._ingecad_patch = True
+    BaseDimensionRenderer.__init__ = __init__
 
 
 def _patch_single_vertex_leader() -> None:
@@ -512,6 +562,7 @@ def _patch_annotative_dimension_scales() -> None:
     original_transform = Dimension.transform
 
     def render(self, *args, **kwargs):
+        upright_dimension(self.dimension)
         result = original_render(self, *args, **kwargs)
         from core.annotative import refresh_scale_blocks
 
@@ -529,6 +580,33 @@ def _patch_annotative_dimension_scales() -> None:
     transform._ingecad_patch = True
     DimStyleOverride.render = render
     Dimension.transform = transform
+
+
+def upright_dimension(dim) -> bool:
+    """Turn a mirrored DIMENSION (extrusion 0,0,-1) into the same dimension
+    seen from above, before it is redrawn.
+
+    ezdxf writes the redrawn block in WCS but the display still applies the
+    dimension's flipped OCS, so every mirrored dimension of a plan jumped to
+    -X when it was redrawn (477 of 477 in a fence plan, 1.5 million units
+    away). With extrusion (0, 0, -1) an OCS point (x, y, z) is (-x, y, -z)
+    in WCS and an angle t is 180 - t; groups 11, 12 and 16 are OCS, the
+    other points already WCS. True if it changed.
+    """
+    dxf = dim.dxf
+    extrusion = dxf.get("extrusion", None)
+    if extrusion is None or abs(extrusion[0]) > 1e-12 \
+            or abs(extrusion[1]) > 1e-12 or extrusion[2] > -0.5:
+        return False
+    for name in ("text_midpoint", "insert", "defpoint5"):
+        if dxf.hasattr(name):
+            p = dxf.get(name)
+            dxf.set(name, (-p[0], p[1], -p[2]))
+    for name in ("angle", "horizontal_direction", "text_rotation"):
+        if dxf.hasattr(name) and dxf.is_supported(name):
+            dxf.set(name, (180.0 - float(dxf.get(name))) % 360.0)
+    dxf.extrusion = (0.0, 0.0, 1.0)
+    return True
 
 
 def add_metric_compatible_synonyms(manager) -> None:

@@ -1777,6 +1777,31 @@ def _redress_dim_block(document, dim, old_layer: str, new_layer: str) -> list:
     return moved
 
 
+def _block_text_insert(document, block_name):
+    """(x, y) where a dimension block's text sits, or None."""
+    if not block_name or block_name not in document.doc.blocks:
+        return None
+    for e in document.doc.blocks.get(block_name):
+        if e.dxftype() in ("MTEXT", "TEXT"):
+            p = e.dxf.insert
+            return (p.x, p.y)
+    return None
+
+
+def _shift_block_text(document, dim, dx: float, dy: float) -> None:
+    """Slide only the drawn text of ``dim``'s block; group 11 stays on the
+    dimension line, where AutoCAD keeps it (moving it too would make
+    AutoCAD offset the text again on its next regen)."""
+    if abs(dx) < 1e-12 and abs(dy) < 1e-12:
+        return
+    name = dim.dxf.get("geometry", None)
+    if not name or name not in document.doc.blocks:
+        return
+    for e in document.doc.blocks.get(name):
+        if e.dxftype() in ("MTEXT", "TEXT"):
+            e.translate(dx, dy, 0)
+
+
 def _block_text_rotation(entity) -> float:
     """The rotation a block's text DISPLAYS at, in degrees.
 
@@ -1787,7 +1812,10 @@ def _block_text_rotation(entity) -> float:
     """
     import math
 
-    direction = entity.dxf.get("text_direction", None)
+    # an older dimension's block may carry a TEXT, which has no
+    # text_direction (asking for it raised and aborted the grip edit)
+    direction = entity.dxf.get("text_direction", None) \
+        if entity.dxf.is_supported("text_direction") else None
     if direction is not None and (abs(direction.x) > 1e-12
                                   or abs(direction.y) > 1e-12):
         return math.degrees(math.atan2(direction.y, direction.x)) % 360.0
@@ -1843,6 +1871,11 @@ class DimGripCommand(Command):
                 self._snapshot = snapshot_entity(d)
             except Exception:  # noqa: BLE001 -- a never-rendered dimension
                 self._snapshot = None
+        from core.ezdxf_patches import upright_dimension
+
+        # a mirrored dimension (OCS -Z) is measured below in WCS, as it is
+        # drawn after the render: group 11 is OCS and read as -X otherwise
+        flipped = upright_dimension(d)
         old_block = d.dxf.get("geometry", None)
         # Preserve the text rotation the author's CAD chose: this file's
         # style says outside text lies horizontal (dimtoh), which ezdxf's
@@ -1861,20 +1894,51 @@ class DimGripCommand(Command):
         # it by translation after the render.
         import math
 
+        from core.ezdxf_patches import aligned_angle
+
         old_mid = d.dxf.get("text_midpoint", None)
         old_loc = d.dxf.get("defpoint", None)
-        angle = math.radians(float(d.dxf.get("angle", 0.0)))
+        # an ALIGNED dimension's direction is its origins, not group 50
+        raw = float(d.dxf.get("angle", 0.0)) if d.dxf.is_supported("angle") \
+            else 0.0                   # ARC_DIMENSION has no group 50
+        angle = math.radians(aligned_angle(d, raw))
         nx, ny = -math.sin(angle), math.cos(angle)
+        linear = (int(d.dxf.dimtype) & 7) in (0, 1)
+        # Text the user placed (flag 128) stays where the author's CAD drew
+        # it: AutoCAD keeps group 11 on the dimension line and offsets the
+        # text by DIMTAD, ezdxf centres it ON group 11 -- 1664 hand-placed
+        # labels of 116 corpus plans fell onto their line at the first grip.
+        user_text = bool(int(d.dxf.dimtype) & 128)
+        old_text = _block_text_insert(document, old_block) if user_text else None
+        if old_text is not None and flipped:
+            # the author's block still sits in the mirrored OCS
+            old_text = (-old_text[0], old_text[1])
         perp_old = None
-        if old_mid is not None and old_loc is not None \
-                and (int(d.dxf.dimtype) & 7) in (0, 1):
+        if old_text is None and old_mid is not None and old_loc is not None \
+                and linear:
             perp_old = (old_mid.x - old_loc.x) * nx \
                 + (old_mid.y - old_loc.y) * ny
         for attr, point in self.points.items():
-            setattr(d.dxf, attr, (point[0], point[1], 0.0))
+            # keep the point's height: a radial dimension with elevation
+            # measured through Z when it was set to 0 (R1.80 read R588.95)
+            old = d.dxf.get(attr, None)
+            z = old.z if old is not None else 0.0
+            setattr(d.dxf, attr, (point[0], point[1], z))
         d.render()
         _stamp_dim_block_byblock(document, d)
-        if perp_old is not None:
+        if old_text is not None:
+            target_x, target_y = old_text
+            if "defpoint" in self.points and linear and old_loc is not None:
+                # DIMTMOVE 0: the text travels with its dimension line
+                new_loc = d.dxf.defpoint
+                along = (new_loc.x - old_loc.x) * nx + (new_loc.y - old_loc.y) * ny
+                target_x += nx * along
+                target_y += ny * along
+            new_text = _block_text_insert(document, d.dxf.get("geometry", None))
+            if new_text is not None:
+                _shift_block_text(document, d, target_x - new_text[0],
+                                  target_y - new_text[1])
+        elif perp_old is not None:
             new_mid = d.dxf.get("text_midpoint", None)
             new_loc = d.dxf.get("defpoint", None)
             if new_mid is not None and new_loc is not None:
