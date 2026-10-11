@@ -126,3 +126,25 @@ def test_offset_starts_at_through_and_line_keeps_close_after_undo(win):
     assert "Close" in win.command_line.history.toPlainText().splitlines()[-1]
     _type(win, "C")
     assert len(win.document.modelspace().query("LINE")) == 3
+
+
+def test_dragging_the_text_moves_the_dimension_line_under_dimtmove_0(win):
+    """DIMTMOVE 0, the default: "moves the dimension line with dimension
+    text". The text moved and the line stayed at y = -5."""
+    from core.select import entity_grips
+
+    _type(win, "DIMLINEAR", "0,0", "10,0", "5,-5")
+    dim = win.document.modelspace().query("DIMENSION")[-1]
+    handle = dim.dxf.handle
+    grip = next((x, y, role, handle, i)
+                for i, (x, y, role) in enumerate(entity_grips(dim))
+                if role == "dim_text")
+    win.tools.selection = {handle}
+    win.tools.begin_grip_drag(grip)
+    win.tools.update_grip_drag(7.0, -8.0)
+    win.tools.finish_grip_drag(7.0, -8.0)
+    assert dim.dxf.defpoint.y == pytest.approx(-8.0, abs=1.0)
+    assert dim.dxf.text_midpoint.x == pytest.approx(7.0)
+    assert dim.get_measurement() == pytest.approx(10.0)
+    win.history.undo()
+    assert dim.dxf.defpoint.y == pytest.approx(-5.0)

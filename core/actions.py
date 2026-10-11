@@ -1756,6 +1756,56 @@ class DimTextTranslateCommand(Command):
         document.dirty = True
 
 
+class DimTextWithLineCommand(Command):
+    """The text grip of a linear dimension under DIMTMOVE 0, AutoCAD's
+    default: "moves the dimension line with dimension text" (DIMTMOVE). The
+    part of the drag across the line carries the line, the text riding with
+    it; the part along the line slides the text on it. Only the text moved,
+    leaving the line behind."""
+
+    name = "GRIP"
+    needs_regen = False
+
+    @property
+    def entities(self) -> list:
+        return [self.dim]
+
+    def __init__(self, dim, target) -> None:
+        self.dim = dim
+        self.target = (float(target[0]), float(target[1]))
+        self._steps: list | None = None
+
+    def do(self, document) -> None:
+        if self._steps is None:
+            import math
+
+            from core.ezdxf_patches import aligned_angle
+
+            d = self.dim
+            mid = d.dxf.get("text_midpoint", None) or d.dxf.defpoint
+            angle = math.radians(aligned_angle(d, float(d.dxf.get("angle", 0.0))))
+            ux, uy = math.cos(angle), math.sin(angle)
+            dx, dy = self.target[0] - mid.x, self.target[1] - mid.y
+            across = -dx * uy + dy * ux
+            along = dx * ux + dy * uy
+            loc = d.dxf.defpoint
+            self._steps = [DimGripCommand(
+                d, "defpoint", (loc.x - uy * across, loc.y + ux * across))]
+            self._along = (ux * along, uy * along)
+        self._steps[0].do(document)
+        if abs(self._along[0]) > 1e-12 or abs(self._along[1]) > 1e-12:
+            translate_dim_text(document, self.dim, *self._along)
+        document.dirty = True
+
+    def undo(self, document) -> None:
+        if abs(self._along[0]) > 1e-12 or abs(self._along[1]) > 1e-12:
+            translate_dim_text(document, self.dim,
+                               -self._along[0], -self._along[1],
+                               set_user_flag=False)
+        self._steps[0].undo(document)
+        document.dirty = True
+
+
 def _drop_dim_block(document, name) -> None:
     if name and name in document.doc.blocks \
             and not _dim_block_shared(document, name):

@@ -273,6 +273,17 @@ def _align_dim_line(document, entity, wx, wy, threshold):
     return snapped[0], snapped[1], (snapped[0], snapped[1])
 
 
+def _text_carries_line(dim) -> bool:
+    """A linear or aligned dimension whose DIMTMOVE is 0: dragging its text
+    moves its dimension line (DIMTMOVE, Command Reference)."""
+    if int(dim.dxf.get("dimtype", 0)) & 7 not in (0, 1):
+        return False
+    try:
+        return int(dim.override().get("dimtmove", 0) or 0) == 0
+    except Exception:  # noqa: BLE001 -- an odd style: keep the plain move
+        return False
+
+
 def _dim_grip_preview(entity, role, wx, wy):
     """A live preview frame for a dimension grip drag, or None.
 
@@ -3601,6 +3612,9 @@ class ToolController(QObject):
                 # pointing at nothing (Rafael's sixth review, #67).
                 command = actions.DimTextEditCommand(
                     entity, location=(wx, wy), turn=True)
+            elif role == "dim_text" and _text_carries_line(entity):
+                # DIMTMOVE 0, AutoCAD's default: the line goes with the text
+                command = actions.DimTextWithLineCommand(entity, (wx, wy))
             elif role == "dim_text":
                 # Pure translation: a foreign dimension keeps its author's
                 # block stroke for stroke (DIMTEDIT still offers the full
