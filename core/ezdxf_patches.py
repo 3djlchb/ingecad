@@ -36,6 +36,7 @@ def apply() -> None:
     _patch_single_vertex_leader()
     _patch_dimrnd_zero()
     _patch_fixed_height_dimension_text()
+    _patch_dimension_number_format()
     _patch_dms_angular_text()
 
 
@@ -170,6 +171,52 @@ def _in_paper_space(entity) -> bool:
     record = doc.entitydb.get(owner)
     return record is not None and record.dxftype() == "BLOCK_RECORD" \
         and record.is_any_paperspace
+
+
+def _patch_dimension_number_format() -> None:
+    """Dimension numbers round as AutoCAD rounds them, and a DIMPOST without
+    ``<>`` is a suffix.
+
+    ezdxf formats with Python's ``{:.2f}``: ties go to the even digit and
+    float noise decides the rest, so 0.405 read ".40", 2.625 "2.62" and a
+    measured 2.99499999999 "2.99" where the author's AutoCAD wrote .41, 2.63
+    and 3.00 (158 dimensions of 55 corpus plans after a no-op grip). Half
+    rounds away from zero here, after a relative nudge of 3e-11: AutoCAD
+    reads 2.99499999999 as 3.00 but 0.3149999999437 as .31, and of 0, 1e-11,
+    3e-11, 1e-10 and 1e-9 it is the one that matches the most corpus
+    dimensions.
+
+    A DIMPOST of "m" or " Tub.PVC 63mm" -- no ``<>`` -- made ezdxf raise,
+    aborting every edit of those dimensions (2141 of them in 53 plans);
+    AutoCAD appends it to the number (DIMPOST, Command Reference).
+    """
+    from decimal import ROUND_HALF_UP, Decimal
+
+    from ezdxf.render import dim_base
+
+    if getattr(dim_base.format_text, "_ingecad_patch", False):
+        return
+    original_format = dim_base.format_text
+    original_post = dim_base.apply_dimpost
+
+    def format_text(value, dimrnd=None, dimdec=2, dimzin=0, dimdsep="."):
+        if dimdec is not None and math.isfinite(value):
+            if dimrnd:
+                value = dim_base.xround(value, dimrnd)
+                dimrnd = None
+            nudged = value + math.copysign(3e-11 * max(1.0, abs(value)), value)
+            value = float(Decimal(repr(nudged)).quantize(
+                Decimal(1).scaleb(-int(dimdec)), rounding=ROUND_HALF_UP))
+        return original_format(value, dimrnd, dimdec, dimzin, dimdsep)
+
+    def apply_dimpost(text, dimpost):
+        if "<>" not in dimpost:
+            return text + dimpost
+        return original_post(text, dimpost)
+
+    format_text._ingecad_patch = True
+    dim_base.format_text = format_text
+    dim_base.apply_dimpost = apply_dimpost
 
 
 def _patch_single_vertex_leader() -> None:
@@ -790,7 +837,7 @@ def _patch_linear_dimension_direction() -> None:
     def __init__(self, dimension, ucs=None, override=None):
         dxf = dimension.dxf
         raw_angle = float(dxf.get("angle", 0.0))
-        angle = reading_angle(aligned_angle(dimension, raw_angle))
+        angle = _square(reading_angle(aligned_angle(dimension, raw_angle)))
         p1 = _Vec2(dxf.get("defpoint2", (0, 0)))
         p2 = _Vec2(dxf.get("defpoint3", (0, 0)))
         against = (p2 - p1).dot(_Vec2.from_deg_angle(angle)) < 0.0
@@ -818,7 +865,7 @@ def _patch_linear_dimension_direction() -> None:
     if not getattr(measure, "_ingecad_patch", False):
         def measure_aligned(dim):
             raw = float(dim.dxf.get("angle", 0.0))
-            angle = aligned_angle(dim, raw)
+            angle = _square(aligned_angle(dim, raw))
             if abs(angle - raw) < 1e-12:
                 return measure(dim)
             dim.dxf.angle = angle
@@ -848,6 +895,17 @@ def aligned_angle(dimension, angle: float) -> float:
     if p1.isclose(p2):
         return angle
     return (p2 - p1).angle_deg
+
+
+def _square(angle: float) -> float:
+    """``angle`` snapped onto a multiple of 90 degrees when it is one but
+    for float noise. ezdxf intersects the dimension's construction rays in
+    slope/intercept form: at UTM coordinates a "vertical" 89.9999999958
+    degrees (AutoCAD's origins differ by 1e-13 in x) put the intercept near
+    1e16 and rounded the dimension line to whole units -- 1.60 drew as 2.00.
+    A millionth of a degree is invisible at any plotted scale."""
+    nearest = round(angle / 90.0) * 90.0
+    return nearest if abs(angle - nearest) < 1e-6 else angle
 
 
 def reading_angle(angle: float) -> float:

@@ -135,8 +135,9 @@ def repair_invalid_defaults(doc) -> int:
 
 #: Dimension-style variables whose value ezdxf assumes, when the group is
 #: absent, to be something other than the DXF default of 0.
-_DIMSTYLE_ZERO_DEFAULTS = ("dimadec", "dimarcsym", "dimatfit", "dimazin",
-                           "dimgap", "dimtmove", "dimtofl", "dimzin")
+_DIMSTYLE_ZERO_DEFAULTS = ("dimadec", "dimaltd", "dimarcsym", "dimatfit",
+                           "dimazin", "dimdec", "dimgap", "dimtdec",
+                           "dimtmove", "dimtofl", "dimzin")
 
 
 def repair_dimstyle_defaults(doc) -> int:

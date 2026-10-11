@@ -89,6 +89,8 @@ def measurement_text(dim, value: float) -> str:
             return default
         separator = "."
     factor = float(get("dimlfac", 1.0) or 1.0)
+    if factor < 0.0:            # paper space only; previews are of the model
+        factor = 1.0
     rounding = get("dimrnd", None)
     rounding = float(rounding) if rounding else None
     decimals = get("dimdec", 2)
