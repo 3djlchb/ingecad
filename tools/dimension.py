@@ -559,6 +559,23 @@ class DimDiameterTool(_CurvedDim):
                                     text_rotation=self._text_rotation)
 
 
+def _straight_edge(entity, pick):
+    """((x0, y0), (x1, y1)) of a LINE, or of the straight polyline segment
+    picked (lots that come from QGIS are polylines); None otherwise."""
+    if entity.dxftype() == "LINE":
+        s, w = entity.dxf.start, entity.dxf.end
+        return ((s.x, s.y), (w.x, w.y))
+    if entity.dxftype() == "LWPOLYLINE":
+        from core import modify
+
+        found = modify.polyline_pick(entity, pick)
+        if isinstance(found, str):
+            return None
+        x0, y0, x1, y1 = found[1]
+        return ((x0, y0), (x1, y1))
+    return None
+
+
 class DimAngularTool(_DimTextMixin, Tool):
     """DIMANGULAR: arc / circle / two lines / Enter-for-vertex, then the
     dimension arc location (which picks the dimensioned angle region)."""
@@ -650,20 +667,23 @@ class DimAngularTool(_DimTextMixin, Tool):
                 self._mode = "circle2"
                 self.entity_picker = False
                 self.prompt("Specify second angle endpoint:")
-            elif t == "LINE":
-                s, w = e.dxf.start, e.dxf.end
-                self._line1 = ((s.x, s.y), (w.x, w.y))
+            elif t in ("LINE", "LWPOLYLINE"):
+                line = _straight_edge(e, point)
+                if line is None:
+                    self.ctx.echo(tr("Select an arc, circle, line, or a "
+                                     "straight polyline segment."))
+                    return
+                self._line1 = line
                 self._mode = "line2"
                 self.prompt("Select second line:")
             else:
                 self.ctx.echo(tr("Select an arc, circle, or line."))
         elif mode == "line2":
             e = self.ctx.services.pick_entity(point) if self.ctx.services else None
-            if e is None or e.dxftype() != "LINE":
+            line2 = _straight_edge(e, point) if e is not None else None
+            if line2 is None:
                 self.ctx.echo(tr("Select second line:"))
                 return
-            s, w = e.dxf.start, e.dxf.end
-            line2 = ((s.x, s.y), (w.x, w.y))
             if actions.line_intersection(self._line1, line2) is None:
                 self.ctx.echo(tr("Lines are parallel."))
                 return
@@ -682,24 +702,37 @@ class DimAngularTool(_DimTextMixin, Tool):
             self._p2 = point
             self._to_locate()
         else:   # locate
-            region = self._quadrant if self._quadrant is not None else point
-            if self._line2 is not None:
-                res = actions.angular_from_lines(self._line1, self._line2,
-                                                 region)
-                if res is None:
-                    self.ctx.echo(tr("Lines are parallel."))
-                    return
-                vertex, p1, p2 = res
-                cmd = actions.dim_angular(vertex, p1, p2, point,
-                                          text=self._text,
-                                          text_rotation=self._text_rotation)
-            else:
-                cmd = actions.dim_angular(
-                    self._vertex, self._p1, self._p2, point,
-                    region=region if self._region_free else None,
-                    text=self._text, text_rotation=self._text_rotation)
+            cmd = self._command_at(point)
+            if cmd is None:
+                self.ctx.echo(tr("Lines are parallel."))
+                return
             self.ctx.execute(cmd)
             self.ctx.finish()
+
+    def _command_at(self, point: Point):
+        """The dimension a click at ``point`` leaves, or None."""
+        region = self._quadrant if self._quadrant is not None else point
+        if self._line2 is not None:
+            res = actions.angular_from_lines(self._line1, self._line2, region)
+            if res is None:
+                return None
+            vertex, p1, p2 = res
+            return actions.dim_angular(vertex, p1, p2, point, text=self._text,
+                                       text_rotation=self._text_rotation)
+        if self._vertex is None or self._p1 is None or self._p2 is None:
+            return None
+        return actions.dim_angular(
+            self._vertex, self._p1, self._p2, point,
+            region=region if self._region_free else None,
+            text=self._text, text_rotation=self._text_rotation)
+
+    def preview_command(self, point: Point):
+        """While the arc is placed, the whole dimension follows the cursor
+        -- arc, arrows, text -- as the linear ones do (GeoCad Yaguarete
+        had to add it); before that, nothing."""
+        if self._mode != "locate" or self._pending is not None:
+            return None
+        return self._command_at(point)
 
     def _to_locate(self) -> None:
         self._mode = "locate"

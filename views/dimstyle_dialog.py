@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -206,6 +205,62 @@ def _combo(pairs, value, translate: bool = True) -> QComboBox:
                 if box.itemData(i) == value), 0)
     box.setCurrentIndex(idx)
     return box
+
+
+def precision_samples(kind: str) -> list:
+    """AutoCAD's precision list: (sample, DIMDEC/DIMADEC value).
+
+    ``kind`` is "decimal", or an angular format: "deg", "dms", "grad",
+    "rad". Degrees/minutes/seconds skip values: 0 shows degrees, 2
+    minutes, 4 seconds, 5 to 8 seconds with decimals (the numbers between
+    show what the row below them shows)."""
+    if kind == "dms":
+        return [("0°", 0), ("0°00'", 2), ("0°00'00\"", 4),
+                ("0°00'00.0\"", 5), ("0°00'00.00\"", 6),
+                ("0°00'00.000\"", 7), ("0°00'00.0000\"", 8)]
+    suffix = {"deg": "°", "grad": "g", "rad": "r"}.get(kind, "")
+    return [("0" + ("." + "0" * n if n else "") + suffix, n) for n in range(9)]
+
+
+class PrecisionCombo(QComboBox):
+    """A precision picked from AutoCAD's sample list ("0.00", "0°00'"),
+    keeping a spin box's value()/setValue(). A stored value the list does
+    not show (DIMADEC 3 under degrees/minutes/seconds) is kept as it is
+    until the user picks a row."""
+
+    def __init__(self, value: int, kind: str = "decimal") -> None:
+        super().__init__()
+        self._value = max(0, int(value))
+        self._loading = False
+        self.set_kind(kind)
+        self.currentIndexChanged.connect(self._picked)
+
+    def set_kind(self, kind: str) -> None:
+        self._kind = kind
+        self._loading = True
+        try:
+            self.clear()
+            for sample, code in precision_samples(kind):
+                self.addItem(sample, code)
+            rows = [i for i in range(self.count())
+                    if self.itemData(i) <= self._value]
+            self.setCurrentIndex(rows[-1] if rows else 0)
+        finally:
+            self._loading = False
+
+    def _picked(self, index: int) -> None:
+        if not self._loading and index >= 0:
+            self._value = int(self.itemData(index))
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, value: int) -> None:
+        self._value = max(0, int(value))
+        self.set_kind(self._kind)
+
+
+_ANG_KIND = {0: "deg", 1: "dms", 2: "grad", 3: "rad"}
 
 
 def _dspin(value, lo=0.0, hi=1e6, dec=3, step=0.1) -> QDoubleSpinBox:
@@ -489,9 +544,7 @@ class DimStyleEditorDialog(QDialog):
         f = QFormLayout(lin_group)
         self.dimlunit = _combo(_UNIT_FORMATS, int(a("dimlunit", 2)))
         f.addRow(tr("Unit format"), self.dimlunit)
-        self.dimdec = QSpinBox()
-        self.dimdec.setRange(0, 8)
-        self.dimdec.setValue(int(a("dimdec", 2)))
+        self.dimdec = PrecisionCombo(int(a("dimdec", 2)))
         f.addRow(tr("Precision"), self.dimdec)
         dsep = a("dimdsep", ord(","))
         dsep = chr(dsep) if isinstance(dsep, int) and dsep else str(dsep or ",")
@@ -524,9 +577,13 @@ class DimStyleEditorDialog(QDialog):
         f = QFormLayout(ang_group)
         self.dimaunit = _combo(_ANG_FORMATS, int(a("dimaunit", 0)))
         f.addRow(tr("Units format"), self.dimaunit)
-        self.dimadec = QSpinBox()
-        self.dimadec.setRange(0, 8)
-        self.dimadec.setValue(max(0, int(a("dimadec", 0))))
+        # AutoCAD's list, by the format chosen above (0°00'00" for DMS)
+        self.dimadec = PrecisionCombo(
+            max(0, int(a("dimadec", 0))),
+            _ANG_KIND.get(self.dimaunit.currentData(), "deg"))
+        self.dimaunit.currentIndexChanged.connect(
+            lambda _i: self.dimadec.set_kind(
+                _ANG_KIND.get(self.dimaunit.currentData(), "deg")))
         f.addRow(tr("Precision"), self.dimadec)
         azin = int(a("dimazin", 0))
         zsup = QHBoxLayout()

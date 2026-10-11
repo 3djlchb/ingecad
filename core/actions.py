@@ -2054,8 +2054,13 @@ def line_intersection(l1, l2):
 def angular_from_lines(l1, l2, region):
     """(vertex, p1, p2) for DIMANGULAR between two lines, or None if
     parallel. Of the four regions the two lines form, the one containing
-    ``region`` is dimensioned (official behavior); p1/p2 lie on the
-    bounding rays at the region-pick's distance."""
+    ``region`` is dimensioned (official behavior).
+
+    p1/p2 sit on the bounding rays where AutoCAD's extension lines start:
+    at the line's tip when the line stops short of the dimension arc (the
+    extension then runs from the tip to past the arc), on the arc when the
+    line reaches it (no extension line). They used to sit on the arc
+    always, so a line ending short of it had no extension line at all."""
     vertex = line_intersection(l1, l2)
     if vertex is None:
         return None
@@ -2063,17 +2068,24 @@ def angular_from_lines(l1, l2, region):
     ang1 = math.atan2(l1[1][1] - l1[0][1], l1[1][0] - l1[0][0])
     ang2 = math.atan2(l2[1][1] - l2[0][1], l2[1][0] - l2[0][0])
     ar = math.atan2(region[1] - vertex[1], region[0] - vertex[0])
+
+    def defpoint(angle, line):
+        ux, uy = math.cos(angle), math.sin(angle)
+        reach = max((p[0] - vertex[0]) * ux + (p[1] - vertex[1]) * uy
+                    for p in line)
+        at = min(radius, reach) if reach > 1e-9 else radius
+        return (vertex[0] + at * ux, vertex[1] + at * uy)
+
     for a in (ang1, ang1 + math.pi):
         for b in (ang2, ang2 + math.pi):
-            lo, hi = (a, b) if _ccw_contains(a, b, ar) else (b, a)
+            if _ccw_contains(a, b, ar):
+                (lo, lo_line), (hi, hi_line) = (a, l1), (b, l2)
+            else:
+                (lo, lo_line), (hi, hi_line) = (b, l2), (a, l1)
             if not _ccw_contains(lo, hi, ar):
                 continue
             if (hi - lo) % (2.0 * math.pi) <= math.pi + 1e-9:
-                return (vertex,
-                        (vertex[0] + radius * math.cos(lo),
-                         vertex[1] + radius * math.sin(lo)),
-                        (vertex[0] + radius * math.cos(hi),
-                         vertex[1] + radius * math.sin(hi)))
+                return (vertex, defpoint(lo, lo_line), defpoint(hi, hi_line))
     return None
 
 

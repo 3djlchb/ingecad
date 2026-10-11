@@ -719,6 +719,7 @@
   "CHAMFER works on lines and polyline segments.": "CHAFLAN trabaja con líneas y segmentos de polilínea.",
   "CHAMFER takes the straight segments of a polyline.": "CHAFLAN toma los segmentos rectos de una polilínea.",
   "{n} lines were chamfered": "Se achaflanaron {n} líneas",
+  "Select an arc, circle, line, or a straight polyline segment.": "Designe un arco, un círculo, una línea o un segmento recto de polilínea.",
   "Enter new layer name:": "Indique el nuevo nombre de la capa:",
   "Enter new layout name <{name}>:": "Indique nombre de la nueva presentación <{name}>:",
   "Enter new layout name:": "Indique nuevo nombre de la presentación:",

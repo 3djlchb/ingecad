@@ -35,6 +35,68 @@ def apply() -> None:
     _patch_dxfreplace_mixed_surrogates()
     _patch_single_vertex_leader()
     _patch_dimrnd_zero()
+    _patch_dms_angular_text()
+
+
+def dms_text(degrees: float, dimadec: int, dimdsep: str = ".",
+             trailing: bool = False) -> str:
+    """An angle in degrees, minutes and seconds as AutoCAD writes it.
+
+    DIMADEC 0 shows whole degrees, 1 and 2 minutes, 3 and 4 seconds, 5 to 8
+    seconds with 1 to 4 decimals. Minutes and seconds are not padded --
+    AutoCAD's own text in a colleague's plan reads 60°0'0" (DIMADEC 3) --
+    and the rounding is done once, on the last unit shown, so 59.99" never
+    reads 60". ``trailing`` drops trailing zeros of the seconds' decimals
+    (DIMAZIN).
+    """
+    sign = "-" if degrees < 0 else ""
+    value = abs(degrees)
+    precision = max(0, int(dimadec))
+    if precision < 1:
+        return f"{sign}{int(round(value))}°"
+    if precision < 3:
+        d, m = divmod(int(round(value * 60.0)), 60)
+        return f"{sign}{d}°{m}'"
+    places = min(4, max(0, precision - 4))
+    scale = 10 ** places
+    d, rest = divmod(int(round(value * 3600.0 * scale)), 3600 * scale)
+    m, seconds = divmod(rest, 60 * scale)
+    whole, fraction = divmod(seconds, scale)
+    text = f"{whole}"
+    if places:
+        digits = f"{fraction:0{places}d}"
+        if trailing:
+            digits = digits.rstrip("0")
+        if digits:
+            text += (dimdsep or ".") + digits
+    return f"{sign}{d}°{m}'{text}\""
+
+
+def _patch_dms_angular_text() -> None:
+    """Degrees, minutes and seconds the way AutoCAD writes them.
+
+    ezdxf rounded the seconds to DIMADEC-5 places and then printed them
+    with DIMADEC decimals (45°26'7.00000" for 7.5"), and its rounding could
+    leave 60" (GeoCad Yaguarete had to patch it). See ``dms_text``.
+    """
+    from ezdxf.render import dim_curved
+
+    original = dim_curved.format_angular_text
+    if getattr(original, "_ingecad_patch", False):
+        return
+
+    def format_angular_text(value, angle_units, dimrnd, dimdec, dimzin,
+                            dimdsep):
+        if angle_units == 1:
+            degrees = math.degrees(value)
+            if dimrnd:
+                degrees = round(degrees / dimrnd) * dimrnd
+            return dms_text(degrees, dimdec, dimdsep,
+                            trailing=bool(int(dimzin or 0) & 8))
+        return original(value, angle_units, dimrnd, dimdec, dimzin, dimdsep)
+
+    format_angular_text._ingecad_patch = True
+    dim_curved.format_angular_text = format_angular_text
 
 
 def _patch_dimrnd_zero() -> None:
