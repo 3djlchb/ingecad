@@ -417,6 +417,7 @@ class ToolController(QObject):
         self._clip_id: Optional[str] = None   # this window's copy on the system clipboard
         self._foreign_clip: Optional[tuple] = None   # (id, (sources, base)) read back
         self._clip_writers: set = set()   # ClipWriter threads in flight
+        self._clip_pending: Optional[tuple] = None   # a big copy, not yet out
         self._ghost_on = False   # a drag ghost (MOVE/COPY/PASTE) is showing
         # Ghost tessellation is expensive on big selections: cache it per
         # entity-list identity and build it OFF the UI thread.
@@ -913,7 +914,65 @@ class ToolController(QObject):
             self.clear_selection()
         return True
 
+    #: Objects (block contents counted) up to which Ctrl+C puts the copy on
+    #: the system clipboard at once; a few hundredths of a second. A bigger
+    #: copy waits until the user leaves the window: building it cost 1.3 s
+    #: of frozen GUI on a whole 10 000-object plan, and writing it 1.9 s
+    #: more of a worker fighting the next ERASE for the GIL (release bench
+    #: against v0.6.6). Pasting in this window always uses memory.
+    CLIPBOARD_NOW_LIMIT = 600
+
+    def _clip_weight(self, entities) -> int:
+        weight = 0
+        doc = self.window.document.doc if self.window.document else None
+        counts = {}
+        for e in entities:
+            weight += 1
+            if e.dxftype() == "INSERT" and doc is not None:
+                name = e.dxf.get("name", "")
+                if name not in counts:
+                    block = doc.blocks.get(name) if name in doc.blocks else None
+                    counts[name] = len(block) if block is not None else 0
+                weight += counts[name]
+            if weight > self.CLIPBOARD_NOW_LIMIT:
+                break
+        return weight
+
     def _publish_clipboard(self, entities, base) -> None:
+        from views import clipboard
+
+        self._clip_pending = None
+        if self._clip_weight(entities) > self.CLIPBOARD_NOW_LIMIT:
+            # a big copy: memory now, the system clipboard when the user
+            # goes to another window (_on_application_state)
+            self._clip_id = None
+            self._clip_pending = (list(entities), base)
+            self._watch_application_state()
+            return
+        self._put_on_system_clipboard(entities, base)
+
+    def _watch_application_state(self) -> None:
+        if getattr(self, "_app_state_watched", False):
+            return
+        from PySide6.QtGui import QGuiApplication
+
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.applicationStateChanged.connect(self._on_application_state)
+            self._app_state_watched = True
+
+    def _on_application_state(self, state) -> None:
+        from PySide6.QtCore import Qt
+
+        pending = getattr(self, "_clip_pending", None)
+        if pending is None or state != Qt.ApplicationInactive:
+            return
+        self._clip_pending = None
+        entities = [e for e in pending[0] if e.is_alive]
+        if entities:
+            self._put_on_system_clipboard(entities, pending[1])
+
+    def _put_on_system_clipboard(self, entities, base) -> None:
         from core import gc_guard
         from views import clipboard
 
@@ -942,8 +1001,8 @@ class ToolController(QObject):
         window's own (pasted from memory) or not IngeCAD's at all."""
         from views import clipboard
 
-        if self._clip_writers:      # this window's copy is still being written
-            return None
+        if self._clip_writers or getattr(self, "_clip_pending", None) is not None:
+            return None             # this window's copy is the latest: memory
         clip_id = clipboard.current_id()
         if clip_id is None or clip_id == self._clip_id:
             return None

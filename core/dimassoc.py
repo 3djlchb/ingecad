@@ -213,6 +213,21 @@ class DimAssoc(DXFObject):
 factory.register_entity(DimAssoc)
 
 
+class _QuietUntiedCopy:
+    """ezdxf logs "copy process ignored DIMASSOC(...)" for every associative
+    dimension copied (COPY, Ctrl+C, an undo snapshot): it is the intended
+    outcome -- a dimension copied without its object is not tied to it, as
+    in AutoCAD -- and on a real plan it filled the console by the hundred."""
+
+    def filter(self, record) -> bool:
+        return not str(record.getMessage()).startswith("copy process ignored DIMASSOC")
+
+
+import logging  # noqa: E402
+
+logging.getLogger("ezdxf").addFilter(_QuietUntiedCopy())
+
+
 # -- finding them ------------------------------------------------------------------
 
 def of_dimension(dim) -> Optional[DimAssoc]:

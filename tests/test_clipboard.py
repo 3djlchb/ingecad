@@ -305,3 +305,49 @@ def test_a_cut_is_a_snapshot_on_the_system_clipboard(qapp):
     assert base == (1.0, 2.0)
     assert [e.dxftype() for e in sources] == ["LINE"]
     assert sources[0].dxf.end == (3, 4, 0)
+
+
+def test_a_big_copy_reaches_the_system_clipboard_when_the_window_is_left(qapp):
+    """Release bench against v0.6.6: Ctrl+C froze 1.5 s on a 10 000-object
+    plan building the clipboard drawing. A big copy now stays in memory
+    (pasting here works at once) and goes out when the user leaves the
+    window for another one -- where the other IngeCAD will paste it."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QGuiApplication
+
+    from core import actions
+    from views import clipboard
+    from views.main_window import MainWindow
+
+    first, second = MainWindow(), MainWindow()
+    for win in (first, second):
+        win.show()
+        win.new_document()
+    try:
+        tools = first.tools
+        n = tools.CLIPBOARD_NOW_LIMIT + 50
+        for i in range(n):
+            tools._execute(actions.add_line((0, i), (5, i)))
+        clipboard.publish([second.document.modelspace().add_line((0, 0), (1, 1))],
+                          (0, 0))               # something else on the clipboard
+        before = clipboard.current_id()
+        tools.select_all()
+        assert tools.copy_selection()
+        import time
+        t0 = time.monotonic()
+        while tools._clip_writers and time.monotonic() - t0 < 20:
+            qapp.processEvents()             # any write in flight lands
+        qapp.processEvents()
+        assert clipboard.current_id() == before, "a big copy went out at once"
+        assert tools.clipboard_data()[0] is tools._clipboard[0], "paste here uses memory"
+        QGuiApplication.instance().applicationStateChanged.emit(Qt.ApplicationInactive)
+        t0 = time.monotonic()
+        while clipboard.current_id() != tools._clip_id and time.monotonic() - t0 < 20:
+            qapp.processEvents()
+        assert tools._clip_id and clipboard.current_id() == tools._clip_id
+        sources, _base = second.tools.clipboard_data()
+        assert len(sources) == n
+    finally:
+        for win in (first, second):
+            win.document.dirty = False
+            win.close()
