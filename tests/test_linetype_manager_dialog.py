@@ -312,3 +312,34 @@ def test_dash_lt_typed_in_the_window_loads_from_the_proposed_file(qapp, monkeypa
     finally:
         win.document.dirty = False
         win.close()
+
+
+def test_library_descriptions_read_in_the_interface_language(qapp):
+    """The release tour found "Dashed __ __" in a Spanish window: the
+    library's wording is shown translated, the drawing keeps its own, and
+    looking at a description without editing it changes nothing."""
+    from core import i18n
+
+    i18n.set_language("es")
+    win = _window(qapp)
+    try:
+        def inside(dialog):
+            _load(dialog, "DASHED", "ACAD_ISO02W100")
+            rows = {dialog.table.item(r, 0).data(Qt.UserRole):
+                    dialog.table.item(r, 2).text()
+                    for r in range(dialog.table.rowCount())}
+            assert rows["DASHED"].startswith("Trazos __ __")
+            assert rows["ACAD_ISO02W100"].startswith("Trazo ISO __")
+            dialog.select("DASHED")
+            dialog.details_button.click()
+            assert dialog.description_edit.text().startswith("Trazos")
+            dialog.description_edit.editingFinished.emit()
+            dialog._ok()
+
+        _run(qapp, win, lambda w: _type(w, "LINETYPE"), inside)
+        stored = win.document.doc.linetypes.get("DASHED").dxf.description
+        assert stored.startswith("Dashed __"), "the drawing keeps its wording"
+    finally:
+        i18n.set_language("en")
+        win.document.dirty = False
+        win.close()

@@ -260,6 +260,18 @@ class _InputHold(QWidget):
 SETTING_WINDOW_GEOMETRY = "ui/window_geometry"
 
 
+class _LayoutTabHost(QWidget):
+    """The Model/layout tab row: asks for the width of every tab, even
+    while some wait behind "…"."""
+
+    full_width = 0
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        hint.setWidth(max(hint.width(), self.full_width))
+        return hint
+
+
 class MainWindow(DocumentTabsMixin, QMainWindow):
     # A live viewport regen must fit a frame-ish budget or pan blocks the UI.
     _VP_LIVE_BUDGET_MS = 33.0
@@ -1100,6 +1112,9 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
             self._native_window = handle
 
     def eventFilter(self, obj, event) -> bool:
+        if (event.type() == QEvent.Resize
+                and obj is getattr(self, "_layout_tab_host", None)):
+            self._fit_layout_tabs()
         # The sidebar handle rides the drawing's right edge.
         if (event.type() in (QEvent.Resize, QEvent.Move, QEvent.Show)
                 and obj is getattr(self, "viewport", None)):
@@ -3983,7 +3998,7 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
                      "REVCLOUD",
                      "DIST", "ID", "AREA", "LIST",
                      "STRETCH", "BREAK", "JOIN",
-                     "CHAMFER", "ARRAY", "MATCHPROP", "PEDIT",
+                     "CHAMFER", "ARRAY", "MATCHPROP", "CHPROP", "PEDIT",
                      "DRAWORDER", "LAYISO", "LAYOFF", "LAYFRZ", "LAYLCK",
                      "LAYULK", "IMAGEATTACH",
                      "TABLE", "PDFATTACH", "IMAGEADJUST", "TRANSPARENCY",
@@ -5324,11 +5339,12 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         # Model / layout tabs, bottom-left on the coordinates row (BricsCAD).
         self._active_layout = "Model"
         self._block_session = None     # the open Block Editor, if any
-        self._layout_tab_host = QWidget(self)
+        self._layout_tab_host = _LayoutTabHost(self)
         self._layout_tab_bar = QHBoxLayout(self._layout_tab_host)
         self._layout_tab_bar.setContentsMargins(0, 0, 6, 0)
         self._layout_tab_bar.setSpacing(1)
         self.statusBar().addWidget(self._layout_tab_host)
+        self._layout_tab_host.installEventFilter(self)    # fit on resize
 
         # Coordinate readout — the classic AutoCAD tracker. It doubles as the
         # progress line while a drawing opens: see _set_busy. Nothing else may
@@ -5387,6 +5403,17 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
             self._tab_buttons[b] = name
             b.installEventFilter(self)          # double-click renames
             self._layout_tab_bar.addWidget(b)
+        # AutoCAD's overflow: the tabs that do not fit leave the row and
+        # this button lists every layout (a narrow window stacked them on
+        # top of each other, unreadable -- the release tour, 2026-10-10).
+        more = QToolButton(self._layout_tab_host)
+        more.setText("…")
+        more.setToolTip(tr("All layouts"))
+        more.setStyleSheet(self._TAB_STYLE)
+        more.setFocusPolicy(Qt.NoFocus)
+        more.clicked.connect(self._layout_overflow_menu)
+        self._layout_tab_bar.addWidget(more)
+        self._layout_more = more
         plus = QToolButton(self._layout_tab_host)
         plus.setText("+")
         plus.setToolTip(tr("New layout"))
@@ -5394,6 +5421,65 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         plus.setFocusPolicy(Qt.NoFocus)
         plus.clicked.connect(self._new_layout_tab)
         self._layout_tab_bar.addWidget(plus)
+        self._layout_plus = plus
+        self._fit_layout_tabs()
+
+    def _fit_layout_tabs(self) -> None:
+        """Show the tabs that fit the row; Model and the active layout
+        always, the rest in order while there is room, "…" for the others."""
+        host = self._layout_tab_host
+        buttons = list(getattr(self, "_tab_buttons", {}))
+        more = getattr(self, "_layout_more", None)
+        plus = getattr(self, "_layout_plus", None)
+        if more is None or plus is None or not buttons:
+            return
+        spacing = self._layout_tab_bar.spacing()
+        width = lambda b: b.sizeHint().width() + spacing  # noqa: E731
+        margins = self._layout_tab_bar.contentsMargins()
+        room = host.width() - margins.left() - margins.right() - width(plus)
+        names = self._tab_buttons
+        must = [b for b in buttons
+                if names[b] in ("Model", self._active_layout)]
+        # Never smaller than Model, the active tab, "…" and "+".
+        host.setMinimumWidth(sum(width(b) for b in must) + width(more)
+                             + width(plus) + margins.left() + margins.right())
+        if sum(width(b) for b in buttons) <= room:
+            shown = set(buttons)
+        else:
+            room -= width(more)
+            used = sum(width(b) for b in must)
+            shown = set(must)
+            for b in buttons:
+                if b in shown:
+                    continue
+                if used + width(b) > room:
+                    break
+                shown.add(b)
+                used += width(b)
+        for b in buttons:
+            b.setVisible(b in shown)
+        more.setVisible(len(shown) < len(buttons))
+        # Ask the status bar for room for every tab, hidden ones included,
+        # or a row that once overflowed would never grow back.
+        full = (sum(width(b) for b in buttons) + width(plus)
+                + margins.left() + margins.right())
+        if host.full_width != full:
+            host.full_width = full
+            host.updateGeometry()
+
+    def _layout_overflow_menu(self) -> None:
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        for name in self._layout_names():
+            action = menu.addAction(tr("Model") if name == "Model" else name)
+            action.setCheckable(True)
+            action.setChecked(name == self._active_layout)
+            action.setData(name)
+        more = self._layout_more
+        chosen = menu.exec(more.mapToGlobal(more.rect().topLeft()))
+        if chosen is not None:
+            self.switch_layout(chosen.data())
 
     def switch_layout(self, name: str) -> None:
         """Model/Layout tabs: re-render the chosen space (AutoCAD tabs)."""
@@ -6102,6 +6188,16 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         ``as_template`` keeps the content and drops the origin, so the drawing
         becomes an unnamed new one.
         """
+        if not as_template:
+            # AutoCAD brings the drawing already open to the front rather
+            # than opening it a second time (two tabs, two sets of edits,
+            # one file).
+            session = self._session_for_path(path)
+            if session is not None:
+                self.switch_document(session)
+                self.command_line.echo(
+                    tr("{name} is already open.", name=path.name))
+                return
         self._open_as_template = bool(as_template)
         if path.suffix.lower() == ".dwg":
             from formats.dwg_bridge import have_dwg_support

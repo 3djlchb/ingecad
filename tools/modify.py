@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Marco Sumari Tellez and IngeCAD contributors.
 """The editing commands and their prompts: STRETCH, BREAK, JOIN, CHAMFER,
-ARRAY, MATCHPROP, PEDIT.
+ARRAY, MATCHPROP, CHPROP, PEDIT.
 
 Wording follows the AutoCAD Command Reference (STRETCH p.1851, BREAK p.269,
 JOIN p.1013, CHAMFER p.313, -ARRAY p.155, MATCHPROP p.1080, PEDIT p.1434).
@@ -1096,6 +1096,158 @@ class AddSelectedTool(Tool):
         window._invoke_command(command)
 
 
+class ChpropTool(Tool):
+    """CHPROP (reference p. 323): the properties of a selection, typed.
+
+    Offers Color, LAyer, LType, ltScale, LWeight and Thickness. Transparency,
+    Material and Annotative are not listed: the prompt names only what this
+    command changes (the PEDIT rule). Each answer is one undoable
+    ``SetPropertyCommand`` and the menu comes back until Enter, as in
+    AutoCAD.
+    """
+
+    wants_selection = True
+
+    MENU = ("Enter property to change "
+            "[Color/LAyer/LType/ltScale/LWeight/Thickness]:")
+    #: option key -> (DXF attribute, prompt, what an entity without one has)
+    PROPERTIES = {
+        "C": ("color", "Enter new color <{current}>:", 256),
+        "LA": ("layer", "Enter new layer name <{current}>:", "0"),
+        "LT": ("linetype", "Enter new linetype name <{current}>:", "ByLayer"),
+        "S": ("ltscale", "Specify new linetype scale <{current}>:", 1.0),
+        "LW": ("lineweight", "Enter new lineweight <{current}>:", -1),
+        "T": ("thickness", "Specify new thickness <{current}>:", 0.0),
+    }
+
+    def start(self) -> None:
+        self.name = "CHPROP"
+        self._entities: list = []
+        self._property = None
+
+    def on_selection(self, entities: list) -> None:
+        if not entities:
+            self.ctx.finish()
+            return
+        self._entities = list(entities)
+        # From here on what is typed is a word or a name, never a snap.
+        self.entity_picker = True
+        self._menu()
+
+    def _menu(self) -> None:
+        self._property = None
+        self.prompt(self.MENU)
+
+    def wants_raw_text(self) -> bool:
+        # A layer or linetype name may carry spaces.
+        return self._property in ("LA", "LT")
+
+    def _supporting(self, attribute: str) -> list:
+        return [e for e in self._entities
+                if e.is_alive and e.dxf.is_supported(attribute)]
+
+    def _current(self, key: str) -> str:
+        attribute, _prompt, default = self.PROPERTIES[key]
+        values = {e.dxf.get(attribute, default)
+                  for e in self._supporting(attribute)}
+        if len(values) != 1:
+            return tr("varies")
+        value = values.pop()
+        if key == "C":
+            return {256: "BYLAYER", 0: "BYBLOCK"}.get(value, str(value))
+        if key == "LW":
+            from core.layers import lineweight_label
+
+            return lineweight_label(value)
+        if key in ("S", "T"):
+            return f"{float(value):.4f}"
+        return str(value)
+
+    def on_option(self, text: str) -> bool:
+        if self._property is None:
+            key = self.option(text) or text.strip().upper()
+            if key not in self.PROPERTIES:
+                self.ctx.echo(tr("Invalid option keyword."))
+                self._menu()
+                return True
+            self._property = key
+            _attribute, source, _default = self.PROPERTIES[key]
+            self.prompt(source, current=self._current(key))
+            return True
+        value = self._value(self._property, text.strip())
+        if value is not None:
+            self._apply(self._property, value)
+        self._menu()
+        return True
+
+    def on_enter(self) -> None:
+        if self._property is not None:
+            self._menu()               # Enter keeps the current value
+            return
+        self.ctx.finish()
+
+    def _document(self):
+        services = self.ctx.services
+        return getattr(services, "document", None) if services else None
+
+    def _value(self, key: str, raw: str):
+        """What was typed as the new value, or None (already explained)."""
+        from core import layers, linetypes
+        from tools.attributes import parse_color
+
+        document = self._document()
+        if key == "C":
+            value = parse_color(raw)
+            if value is None:
+                self.ctx.echo(tr("Invalid color."))
+            return value
+        if key == "LA":
+            if document is not None and raw not in document.doc.layers:
+                self.ctx.echo(tr('Cannot find layer "{name}".', name=raw))
+                return None
+            return raw
+        if key == "LT":
+            if raw.upper() in ("BYLAYER", "BYBLOCK"):
+                return "ByLayer" if raw.upper() == "BYLAYER" else "ByBlock"
+            if document is None:
+                return raw
+            loaded = {n.upper(): n
+                      for n in layers.available_linetypes(document)}
+            if raw.upper() in loaded:
+                return loaded[raw.upper()]
+            # AutoCAD tries acad.lin before giving up.
+            if raw.upper() in linetypes.library(document):
+                self.ctx.execute(linetypes.LoadLinetypesCommand([raw]))
+                return raw
+            self.ctx.echo(tr('Linetype "{name}" is not loaded.', name=raw))
+            return None
+        if key == "LW":
+            word = {"BYLAYER": -1, "BYBLOCK": -2, "DEFAULT": -3}
+            if raw.upper() in word:
+                return word[raw.upper()]
+            try:
+                return layers.snap_lineweight(float(raw))
+            except ValueError:
+                self.ctx.echo(tr("Invalid lineweight."))
+                return None
+        try:
+            value = float(raw)
+        except ValueError:
+            self.ctx.echo(tr("Requires a number."))
+            return None
+        if key == "S" and value <= 0:
+            self.ctx.echo(tr("Requires a positive number."))
+            return None
+        return value
+
+    def _apply(self, key: str, value) -> None:
+        attribute = self.PROPERTIES[key][0]
+        targets = self._supporting(attribute)
+        if targets:
+            self.ctx.execute(
+                actions.SetPropertyCommand(targets, attribute, value))
+
+
 class HatchEditTool(Tool):
     """HATCHEDIT — "Modifies an existing hatch or fill" (reference p. 896).
 
@@ -1141,6 +1293,7 @@ MODIFY_TOOL_CLASSES = {
     "CHAMFER": ChamferTool,
     "ARRAY": ArrayTool,
     "MATCHPROP": MatchPropTool,
+    "CHPROP": ChpropTool,
     "PEDIT": PeditTool,
     "DRAWORDER": DrawOrderTool,
     "LAYISO": LayIsoTool,

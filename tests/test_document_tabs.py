@@ -164,3 +164,16 @@ def test_two_untitled_tabs_autosave_to_different_files(qapp, win):
     second = win._autosave_paths()
     assert first[0] != second[0]
     assert first[0].name.startswith("Untitled_") and second[0].name.startswith("Untitled_")
+
+
+def test_opening_a_drawing_already_open_brings_its_tab_back(qapp, win, tmp_path):
+    """The release tour opened the same plan twice and got two tabs: two
+    sets of edits racing for one file. AutoCAD shows the open one."""
+    uno = _drawing(tmp_path, "uno.dxf")
+    _open(qapp, win, uno)
+    _open(qapp, win, _drawing(tmp_path, "dos.dxf"))
+    _open(qapp, win, tmp_path / "." / "uno.dxf")
+    assert _names(win) == ["uno.dxf", "dos.dxf"]
+    assert win.document.name == "uno.dxf"
+    assert "uno.dxf is already open." in win.command_line.history.toPlainText() \
+        or "uno.dxf ya está abierto." in win.command_line.history.toPlainText()

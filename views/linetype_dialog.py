@@ -93,6 +93,11 @@ def pattern_pixmap(pattern, width: int = SAMPLE_W, height: int = SAMPLE_H,
     return pixmap
 
 
+def _shown(document, name: str) -> str:
+    """A loaded linetype's description as the interface shows it."""
+    return lt_ops.shown_description(lt_ops.description_of(document, name))
+
+
 class SelectLinetypeDialog(QDialog):
     """The loaded linetypes, with their samples. ``result_name()`` answers."""
 
@@ -162,7 +167,7 @@ class SelectLinetypeDialog(QDialog):
                     lt_ops.pattern_of(self.document, name))))
             self.table.setItem(row, 1, sample)
             self.table.setItem(row, 2, QTableWidgetItem(
-                lt_ops.description_of(self.document, name)))
+                _shown(self.document, name)))
             if self._name and name.lower() == self._name.lower():
                 self.table.selectRow(row)
         header = self.table.horizontalHeader()
@@ -305,7 +310,8 @@ class LoadLinetypesDialog(QDialog):
             sample = QTableWidgetItem()
             sample.setIcon(QIcon(pattern_pixmap(sample_dashes(pattern))))
             self.table.setItem(row, 1, sample)
-            self.table.setItem(row, 2, QTableWidgetItem(description))
+            self.table.setItem(row, 2, QTableWidgetItem(
+                lt_ops.shown_description(description)))
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         # ACAD_ISO02W100 is 14 characters: size the name column to the names
@@ -515,8 +521,7 @@ class LinetypeManagerDialog(QDialog):
                     lt_ops.pattern_of(self.document, name))))
             self.table.setItem(row, 1, sample)
             self.table.setItem(row, 2, QTableWidgetItem(
-                self._descriptions.get(
-                    name, lt_ops.description_of(self.document, name))))
+                self._descriptions.get(name, _shown(self.document, name))))
             if name in selected:
                 self.table.selectRow(row)
         header = self.table.horizontalHeader()
@@ -570,7 +575,7 @@ class LinetypeManagerDialog(QDialog):
         self.name_edit.setText(self._label(one) if one else "")
         self.name_edit.setEnabled(editable)
         self.description_edit.setText(
-            self._descriptions.get(one, lt_ops.description_of(self.document, one))
+            self._descriptions.get(one, _shown(self.document, one))
             if one and one.lower() not in ("bylayer", "byblock") else "")
         self.description_edit.setEnabled(
             one is not None and one.lower() not in ("bylayer", "byblock",
@@ -668,7 +673,7 @@ class LinetypeManagerDialog(QDialog):
             return
         name = names[0]
         text = self.description_edit.text()
-        if text != lt_ops.description_of(self.document, name):
+        if text != _shown(self.document, name):
             self._descriptions[name] = text
         else:
             self._descriptions.pop(name, None)

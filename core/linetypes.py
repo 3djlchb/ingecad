@@ -27,6 +27,7 @@ what every plan carries for several families.
 """
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
 from core.commands import Command
@@ -246,6 +247,55 @@ def description_of(document, name: str) -> str:
             return text
     found = library(document).get(name.upper())
     return found[0] if found else ""
+
+
+#: The words of the library descriptions, as the interface shows them. A
+#: Spanish AutoCAD loads its own acadiso.lin ("Trazos __ __ __"); here the
+#: drawing keeps what it says and only the display is translated, so the
+#: same file reads the same in every language and nothing is rewritten.
+_LABELS = {
+    "Solid line": "linetype|Solid line",
+    "Border": "linetype|Border",
+    "Center": "linetype|Center",
+    "Dash dot": "linetype|Dash dot",
+    "Dashed": "linetype|Dashed",
+    "Divide": "linetype|Divide",
+    "Dot": "linetype|Dot",
+    "Hidden": "linetype|Hidden",
+    "Phantom": "linetype|Phantom",
+    "ISO dash": "linetype|ISO dash",
+    "ISO dash space": "linetype|ISO dash space",
+    "ISO long-dash dot": "linetype|ISO long-dash dot",
+    "ISO long-dash double-dot": "linetype|ISO long-dash double-dot",
+    "ISO long-dash triple-dot": "linetype|ISO long-dash triple-dot",
+    "ISO dot": "linetype|ISO dot",
+    "ISO long-dash short-dash": "linetype|ISO long-dash short-dash",
+    "ISO long-dash double-short-dash":
+        "linetype|ISO long-dash double-short-dash",
+    "ISO dash dot": "linetype|ISO dash dot",
+    "ISO double-dash dot": "linetype|ISO double-dash dot",
+    "ISO dash double-dot": "linetype|ISO dash double-dot",
+    "ISO double-dash double-dot": "linetype|ISO double-dash double-dot",
+    "ISO dash triple-dot": "linetype|ISO dash triple-dot",
+    "ISO double-dash triple-dot": "linetype|ISO double-dash triple-dot",
+}
+#: "Dashed (.5x) _ _ _": the words, the size, the drawn sample.
+_DESCRIPTION = re.compile(r"^(.*?)( \((?:\.5|2)x\))?( +[_.].*)?$")
+_LIBRARY_TEXTS = {description for description, _ in STANDARD.values()}
+
+
+def shown_description(text: str) -> str:
+    """A library description in the interface language ("Trazos __ __"
+    for "Dashed __ __"); anything else -- the user's own wording -- as is."""
+    if text not in _LIBRARY_TEXTS:
+        return text
+    match = _DESCRIPTION.match(text)
+    key = _LABELS.get(match.group(1)) if match else None
+    if key is None:
+        return text
+    from core.i18n import tr_context
+
+    return tr_context(key) + (match.group(2) or "") + (match.group(3) or "")
 
 
 def pattern_of(document, name: str) -> list[float]:
@@ -688,7 +738,8 @@ def linetype_command(document, execute, echo, pick_file, args=()):
         echo(f"{tr('Linetype'):<20}{tr('Description')}")
         echo("-" * 60)
         for name in names:
-            echo(f"{name:<20}{entries.get(name, ('', None))[0]}")
+            echo(f"{name:<20}"
+                 f"{shown_description(entries.get(name, ('', None))[0])}")
         return ask_set()
 
     # -- Create ---------------------------------------------------------------------

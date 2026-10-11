@@ -46,6 +46,7 @@
   "JOIN":      {"name": "UNIR"},
   "PEDIT":     {"name": "EDITPOL"},
   "MATCHPROP": {"name": "IGUALARPROP"},
+  "CHPROP":    {"name": "CAMBIAPROP"},
   "DRAWORDER": {"name": "ORDENAOBJETOS"},
 
   "BLOCK":     {"name": "BLOQUE"},

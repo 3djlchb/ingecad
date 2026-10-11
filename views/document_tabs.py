@@ -18,6 +18,7 @@ comes back without a regen.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt
@@ -194,6 +195,25 @@ class DocumentTabsMixin:
                  if current in self._sessions else len(self._sessions))
         self._sessions.insert(index, session)
         self._session = session
+
+    def _session_for_path(self, path) -> Optional[DocumentSession]:
+        """The open drawing saved at ``path``, or None."""
+        try:
+            wanted = Path(path).resolve()
+        except OSError:
+            return None
+        for session in self._sessions:
+            document = (self.document if session is self._session
+                        else session.document)
+            own = getattr(document, "path", None)
+            if own is None:
+                continue
+            try:
+                if Path(own).resolve() == wanted:
+                    return session
+            except OSError:
+                continue
+        return None
 
     # -- switching ---------------------------------------------------------------
     def switch_document(self, session) -> bool:
