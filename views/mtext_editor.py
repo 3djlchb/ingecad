@@ -1041,7 +1041,17 @@ class MTextInPlaceEditor(QWidget):
                 finally:
                     self._loading = was
 
-        self.edit.document().setTextWidth(width - 6)
+        if self._single_line:
+            # A TEXT line grows with what is typed, as AutoCAD's does. It
+            # was as wide as the hidden MTEXT toolbar -- a long empty box
+            # for a two-letter label (GeoCad Yaguarete had to patch it).
+            metrics = self.edit.fontMetrics()
+            typed = metrics.horizontalAdvance(self.edit.toPlainText() or "")
+            width = max(typed + 2 * metrics.averageCharWidth() + 12,
+                        3 * metrics.averageCharWidth() + 12)
+            self.edit.document().setTextWidth(-1)      # one line, no wrap
+        else:
+            self.edit.document().setTextWidth(width - 6)
         content = int(self.edit.document().size().height()) + 8
         # The floor is ONE REAL LINE at the current zoom, not a fixed pixel
         # count: an empty editor whose text is taller than the fixed floor
@@ -1061,8 +1071,9 @@ class MTextInPlaceEditor(QWidget):
             # the ruler then appeared on top of an area 18 px short
             if self.ruler.isVisibleTo(self):
                 chrome += self.ruler.height() + 1
-        self.setGeometry(int(sx) - 2, int(sy) - chrome - 2,
-                         max(width + 4, self._bar.sizeHint().width() + 4),
+        outer = width + 4 if self._single_line \
+            else max(width + 4, self._bar.sizeHint().width() + 4)
+        self.setGeometry(int(sx) - 2, int(sy) - chrome - 2, outer,
                          height + chrome + 4)
 
     # -- lifecycle -------------------------------------------------------------

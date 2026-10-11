@@ -1234,3 +1234,33 @@ def test_yes_in_discard_throws_the_text_away_once(qapp):
         assert not editor.isVisible()
     finally:
         win.close()
+
+
+def test_a_text_line_editor_fits_its_text_and_grows(qapp):
+    """GeoCad Yaguarete had to patch this: the in-place box of a one-line
+    TEXT was as wide as the (hidden) MTEXT toolbar -- a long empty box for
+    a two-letter label. It fits the text and grows as you type."""
+    from PySide6.QtTest import QTest
+
+    win = _editor_window(qapp)
+    try:
+        text = win.document.modelspace().add_text(
+            "A1", dxfattribs={"height": 2.5, "insert": (10, 10)})
+        win.tools.attach_document(win.document)
+        assert win.tools.open_text_editor_for(text)
+        qapp.processEvents()
+        editor = win.tools._mtext_editor
+        short = editor.width()
+        assert short < editor._bar.sizeHint().width(), \
+            "the box is as wide as the hidden toolbar"
+        assert editor.edit.fontMetrics().horizontalAdvance("A1") < short
+        QTest.keyClicks(editor.edit, " - VIGA PRINCIPAL DEL EJE B")
+        qapp.processEvents()
+        assert editor.width() > short, "the box does not grow with the text"
+        typed = editor.edit.fontMetrics().horizontalAdvance(
+            editor.edit.toPlainText())
+        assert editor.width() > typed
+        editor.cancel(ask=False)
+    finally:
+        win.document.dirty = False
+        win.close()

@@ -25,6 +25,7 @@ def apply() -> None:
     _APPLIED = True
     _patch_polygon_transform()
     _patch_mtext_mask_rendering()
+    _patch_exact_family_fonts()
     _patch_bold_italic_font_matching()
     _patch_metric_compatible_fonts()
     _patch_annotative_dimension_scales()
@@ -201,6 +202,54 @@ def _patch_mtext_mask_rendering() -> None:
         return original(mtext)
 
     _frontend.is_complex_mtext = is_complex_mtext
+
+
+def _patch_exact_family_fonts() -> None:
+    """A text in Ubuntu draws in Ubuntu, not in Ubuntu Mono.
+
+    ezdxf picks the font family by PREFIX: "Ubuntu" found "Ubuntu Mono",
+    "Noto Sans" found "Noto Sans Sora Sompeng" -- a monospace or a script
+    font in place of the one the style names, wherever another family
+    starts with the same words (GeoCad Yaguarete had to patch it; fontconfig
+    answers both right). When an installed family has exactly the name
+    asked for, the choice is made among its faces only, with ezdxf's own
+    rule (style, then weight, italic, width). Anything else -- a font that
+    is not installed -- goes on to the metric twins below.
+    """
+    from ezdxf.fonts import font_manager as _fm
+    from ezdxf.fonts import fonts as _fonts
+
+    if getattr(_fonts.find_best_match, "_ingecad_exact_family", False):
+        return
+    original = _fonts.find_best_match
+
+    def find_best_match(*, family="sans-serif", style="Regular", weight=400,
+                        width=5, italic=False):
+        found = original(family=family, style=style, weight=weight,
+                         width=width, italic=italic)
+        wanted = _fm.GENERIC_FONT_FAMILY.get(family, family)
+        if found is None or found.family.lower() == str(wanted).lower():
+            return found
+        try:
+            cache = _fonts.font_manager._font_cache._cache
+        except AttributeError:
+            return found
+        exact = [e for e in cache.values()
+                 if e.font_face.family.lower() == str(wanted).lower()]
+        if not exact:
+            return found
+        styled = _fm.filter_style(style, exact)
+        if len(styled) == 1:
+            return styled[0].font_face
+        pool = styled or exact
+        return min(pool, key=lambda e: (
+            abs(e.font_face.weight - weight),
+            e.font_face.is_italic is not italic,
+            abs(e.font_face.width - width))).font_face
+
+    find_best_match._ingecad_patch = True
+    find_best_match._ingecad_exact_family = True
+    _fonts.find_best_match = find_best_match
 
 
 def _patch_bold_italic_font_matching() -> None:
