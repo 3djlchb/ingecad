@@ -810,6 +810,28 @@ def transform_entity(entity, matrix) -> None:
         transform_viewport(entity, matrix)
 
 
+def _hatch_direction(entity):
+    """A patterned hatch's pattern before a MIRROR, or None."""
+    if entity.dxftype() not in ("HATCH", "MPOLYGON") \
+            or not getattr(entity, "has_pattern_fill", False):
+        return None
+    import copy as _copy
+
+    return (_copy.deepcopy(entity.pattern),
+            float(entity.dxf.get("pattern_angle", 0.0)))
+
+
+def _keep_hatch_direction(entity, saved) -> None:
+    """MIRRHATCH 0, AutoCAD's initial value, "retains hatch pattern
+    direction" (MIRRHATCH): the boundary is mirrored, the pattern is not.
+    ezdxf turned the pattern by twice the axis angle, so a hatch mirrored
+    about an oblique axis came out rotated (a vertical or horizontal axis
+    happened to cancel out)."""
+    if saved is None:
+        return
+    entity.pattern, entity.dxf.pattern_angle = saved
+
+
 def _with_clip_boundaries(entities) -> list:
     """``entities`` plus the clipping boundary of every clipped VIEWPORT
     among them: AutoCAD moves the two together. Moving the viewport alone
@@ -906,9 +928,11 @@ class TransformCommand(Command):
                 self._before.append((e, before))
             attribs = ([(a, a.copy()) for a in e.attribs]
                        if readable and kind == "INSERT" else [])
+            hatch = _hatch_direction(e) if self.upright else None
             transform_entity(e, self.matrix)
             if self.upright and kind in ocs.OCS_TYPES:
                 ocs.upright(e)
+            _keep_hatch_direction(e, hatch)
             if text:
                 mirrtext.make_readable(e, before, self.matrix)
             for attrib, snapshot in attribs:
@@ -1005,9 +1029,11 @@ class CopyEntitiesCommand(Command):
             clone = _copy_or_none(e)
             if clone is None:
                 continue
+            hatch = _hatch_direction(clone) if self.upright else None
             transform_entity(clone, self.matrix)
             if self.upright and clone.dxftype() in ocs.OCS_TYPES:
                 ocs.upright(clone)
+            _keep_hatch_direction(clone, hatch)
             if readable:
                 mirrtext.make_readable(clone, e, self.matrix)
                 if clone.dxftype() == "INSERT":

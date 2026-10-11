@@ -136,3 +136,19 @@ def test_a_clipped_viewport_takes_its_boundary_along():
     assert boundary.get_points("xy")[0] == (110, 10)
     history.undo()
     assert boundary.get_points("xy")[0] == (10, 10)
+
+
+def test_mirror_keeps_a_hatch_pattern_direction():
+    """MIRRHATCH 0, the initial value: "Retains hatch pattern direction".
+    About an oblique axis the pattern turned by twice the axis angle."""
+    document = Document.new()
+    hatch = document.modelspace().add_hatch()
+    hatch.set_pattern_fill("ANSI31", scale=1.0)
+    hatch.paths.add_polyline_path([(0, 0), (4, 0), (4, 4), (0, 4)],
+                                  is_closed=True)
+    history = History(document)
+    for keep in (False, True):
+        history.execute(actions.mirror_entities(
+            [hatch], (0, 0), (1, 2), keep_source=keep))
+    for h in document.modelspace().query("HATCH"):
+        assert [round(line.angle, 9) for line in h.pattern.lines] == [45.0]
