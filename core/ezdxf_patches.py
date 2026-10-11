@@ -40,6 +40,7 @@ def apply() -> None:
     _patch_underscored_arrow_names()
     _patch_suppressed_dimension_line_arrows()
     _patch_two_line_angular_sector()
+    _patch_three_point_angular_sector()
     _patch_dms_angular_text()
 
 
@@ -321,6 +322,48 @@ def _patch_two_line_angular_sector() -> None:
     get_ext1_dir._ingecad_patch = True
     AngularDimension.get_ext1_dir = get_ext1_dir
     AngularDimension.get_ext2_dir = get_ext2_dir
+
+
+def _patch_three_point_angular_sector() -> None:
+    """A 3-point angular dimension measures the side its arc (10) is on.
+
+    ezdxf always went counter-clockwise from the first point to the second,
+    so a dimension drawn on the other side read 360 minus its angle (158
+    for 202): 326 of 709 in a corpus sample. When the arc lies outside that
+    sweep, the two legs are taken the other way round.
+    """
+    import math
+
+    from ezdxf.render.dim_curved import Angular3PDimension
+
+    if getattr(Angular3PDimension.__init__, "_ingecad_patch", False):
+        return
+    original = Angular3PDimension.__init__
+
+    def ccw(a, b) -> float:
+        return (math.atan2(b.y, b.x) - math.atan2(a.y, a.x)) % math.tau
+
+    def __init__(self, dimension, ucs=None, override=None):
+        dxf = dimension.dxf
+        center = dxf.get("defpoint4", None)
+        p1, p2 = dxf.get("defpoint2", None), dxf.get("defpoint3", None)
+        arc = dxf.get("defpoint", None)
+        swap = False
+        if all(v is not None for v in (center, p1, p2, arc)):
+            d1, d2, da = p1 - center, p2 - center, arc - center
+            if da.magnitude > 1e-12 and d1.magnitude > 1e-12 \
+                    and d2.magnitude > 1e-12:
+                swap = ccw(d1, da) > ccw(d1, d2) + 1e-12
+        if swap:
+            dxf.defpoint2, dxf.defpoint3 = p2, p1
+        try:
+            original(self, dimension, ucs, override)
+        finally:
+            if swap:
+                dxf.defpoint2, dxf.defpoint3 = p1, p2
+
+    __init__._ingecad_patch = True
+    Angular3PDimension.__init__ = __init__
 
 
 def _patch_single_vertex_leader() -> None:

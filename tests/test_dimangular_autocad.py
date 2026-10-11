@@ -96,7 +96,10 @@ def test_a_dms_angular_dimension_draws_that_text():
     style.dxf.dimaunit = 1
     style.dxf.dimadec = 4
     msp = doc.modelspace()
-    dim = msp.add_angular_dim_3p(base=(5, 5), center=(0, 0), p1=(10, 0),
+    # the arc inside the 30.5 degree sweep: on the other side it is 329.5
+    dim = msp.add_angular_dim_3p(base=(5 * math.cos(math.radians(15)),
+                                       5 * math.sin(math.radians(15))),
+                                 center=(0, 0), p1=(10, 0),
                                  p2=(10 * math.cos(math.radians(30.5)),
                                      10 * math.sin(math.radians(30.5))),
                                  dimstyle="Standard")

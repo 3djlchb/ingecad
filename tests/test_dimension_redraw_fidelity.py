@@ -247,3 +247,16 @@ def test_two_line_angular_points_of_an_oda_dwg():
     dim = load_dwg(path).modelspace().query("DIMENSION")[0]
     assert tuple(round(v, 6) for v in dim.dxf.defpoint)[:2] == (8.0, 6.0)
     assert tuple(round(v, 6) for v in dim.dxf.defpoint5)[:2] == (6.0, 2.0)
+
+
+def test_a_three_point_angular_measures_the_side_of_its_arc():
+    """ezdxf went counter-clockwise from the first point whatever side the
+    arc was on: 326 of 709 corpus dimensions read 360 minus their angle."""
+    document = Document.new()
+    msp = document.modelspace()
+    texts = []
+    for base in ((5, 5), (-5, -5)):
+        dim = msp.add_angular_dim_3p(base=base, center=(0, 0), p1=(10, 0),
+                                     p2=(0, 10)).render().dimension
+        texts.append(_texts(document.doc, dim))
+    assert texts == [["90°"], ["270°"]]
