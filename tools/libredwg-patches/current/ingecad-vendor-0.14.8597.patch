@@ -2737,3 +2737,43 @@ BLOCK_HEADER, and the importer dropped both as "DXF artifacts".
        // MTEXT context columns: 72 counts the 46 heights that follow. The
        // generic search ignored the vector and kept the count, so the writer
        // read column_heights from NULL -- a DWG ODA crashed on.
+--- a/src/dwg.spec
++++ b/src/dwg.spec
+@@ -5486,7 +5486,6 @@
+         FIELD_2RD (points[rcount1], 10);
+         if (FIELD_VALUE (num_widths) && FIELD_VALUE (widths) &&
+             rcount1 < FIELD_VALUE (num_widths) &&
+-            FIELD_VALUE (num_bulges) == FIELD_VALUE (num_points) &&
+             (FIELD_VALUE (widths[rcount1].start) != 0.0 ||
+              FIELD_VALUE (widths[rcount1].end) != 0.0))
+           {
+--- a/src/in_dxf.c
++++ b/src/in_dxf.c
+@@ -2808,7 +2808,8 @@
+         }
+       else if (pair->code == 40) // not const_width
+         {
+-          if (!j)
++          // the first 40 allocates: a vertex with no width writes none
++          if (!o->num_widths)
+             {
+               o->widths = (Dwg_LWPOLYLINE_width *)xcalloc (
+                   num_points, sizeof (Dwg_LWPOLYLINE_width));
+@@ -2817,7 +2818,7 @@
+                   o->num_widths = 0;
+                   return NULL;
+                 }
+-              o->flag |= 4;
++              o->flag |= 32; // has widths. 4 is const_width
+               o->num_widths = num_points;
+             }
+           CHK_array (j, widths);
+@@ -2825,7 +2826,7 @@
+           LOG_TRACE ("LWPOLYLINE.widths[%d].start = %f [BD 40]\n", j,
+                      pair->value.d);
+         }
+-      else if (pair->code == 41 && (o->flag & 4)) // not const_width
++      else if (pair->code == 41 && (o->flag & 32)) // not const_width
+         {
+           CHK_array (j, widths);
+           o->widths[j].end = pair->value.d;

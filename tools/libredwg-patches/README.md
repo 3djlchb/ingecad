@@ -3,6 +3,30 @@
 IngeCAD embeds LibreDWG's `dwg2dxf`/`dxf2dwg` as satellite converters
 (`vendor/libredwg/bin`, gitignored).
 
+## 2026-10-11: polyline widths survive both ways
+
+Appended to `current/ingecad-vendor-0.14.8597.patch`. Found by a GUI sweep:
+`PLINE` with Width, saved as DWG, reopened hairline.
+
+- **`in_dxf` flagged per-vertex widths with bit 4**, which in the DWG is
+  "has const_width"; "has widths" is 32. The writer then wrote a constant
+  width of 0 and no width list. Also the 41 test.
+- **The width list was allocated only by vertex 0's 40.** `dwg2dxf` writes
+  no 40/41 for a vertex without width, so a polyline whose first segment is
+  thin made `CHK_array` abort the import. Now the first 40 allocates, as the
+  first 42 does for bulges.
+- **`dwg2dxf` wrote the widths only when the polyline had bulges**
+  (`num_bulges == num_points` copied into the widths test): a colleague's
+  plan opened with its wide polylines thin.
+
+ODA as the judge: a DWG written by the new `dxf2dwg` reads back in ODA with
+every width; on two corpus plans ODA's polylines with widths (2 and 6) are
+exactly what the new `dwg2dxf` gives (0 before). Read sweep, 197 corpus
+drawings old vs new `dwg2dxf`: same entity counts everywhere, and 962
+polylines in 44 drawings get their widths back. `make check` 286/0;
+`dwg_fuzz` 500 seeds identical, seed by seed. Upstream: not yet sent (both
+bugs are still on master as of a3d51f13).
+
 ## 2026-10-10: associative dimensions survive open and Save as DWG
 
 Appended to `current/ingecad-vendor-0.14.8597.patch`. IngeCAD 0.6.7 ties
