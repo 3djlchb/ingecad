@@ -730,6 +730,12 @@ class _TrimExtendBase(Tool):
 
         self._edges_handles: list[str] | None = None
         self._asking_mode = False
+        #: Fence points while one is drawn, the first Crossing corner, and
+        #: the edge list before each change, for Undo
+        self._fence: list | None = None
+        self._cross_anchor: Point | None = None
+        self._crossing = False
+        self._history: list = []
         self.quick = trimmode.trimextendmode() == 1
         self.ctx.echo(tr("Current settings: Projection=UCS, Edge=None, "
                          "Mode={mode}", mode=_mode_word(self.quick)))
@@ -749,16 +755,27 @@ class _TrimExtendBase(Tool):
 
     def _object_prompt(self) -> None:
         """AutoCAD 2021's object prompt, per command and mode."""
+        self._fence = None
+        self._crossing = False
+        self._picking_points(False)
         if self.trim_mode:
             self.prompt(
                 "Select object to trim or shift-select to extend or "
-                "[cuTting edges/mOde]:" if self.quick else
-                "Select object to trim or shift-select to extend or [mOde]:")
+                "[cuTting edges/Fence/Crossing/mOde/Undo]:" if self.quick else
+                "Select object to trim or shift-select to extend or "
+                "[Fence/Crossing/mOde/Undo]:")
         else:
             self.prompt(
                 "Select object to extend or shift-select to trim or "
-                "[Boundary edges/mOde]:" if self.quick else
-                "Select object to extend or shift-select to trim or [mOde]:")
+                "[Boundary edges/Fence/Crossing/mOde/Undo]:" if self.quick else
+                "Select object to extend or shift-select to trim or "
+                "[Fence/Crossing/mOde/Undo]:")
+
+    def _picking_points(self, on: bool) -> None:
+        """Fence and Crossing take plain points: no object pick, no target
+        window, osnap on."""
+        self.entity_picker = not on
+        self.accepts_target_windows = not on
 
     def on_option(self, text: str) -> bool:
         from core import trimmode
@@ -778,6 +795,27 @@ class _TrimExtendBase(Tool):
                 self.ctx.services.request_selection()
             return True
         key = self.option(text)
+        if self._fence is not None and key == "U":
+            if self._fence:
+                self._fence.pop()
+            self._fence_prompt()
+            return True
+        if self._fence is None and not self._crossing:
+            if key == "F":
+                # Fence: every object the line crosses (TRIM, p.1951)
+                self._fence = []
+                self._picking_points(True)
+                self.prompt("Specify first fence point:")
+                return True
+            if key == "C":
+                self._crossing = True
+                self._cross_anchor = None
+                self._picking_points(True)
+                self.prompt("Specify first corner:")
+                return True
+            if key == "U":
+                self._undo_one()
+                return True
         if key == "O":
             self._asking_mode = True
             source = ("Enter a trim mode option [Quick/Standard] <{mode}>:"
@@ -792,11 +830,98 @@ class _TrimExtendBase(Tool):
         return False
 
     def on_point(self, point: Point) -> None:
+        if self._fence is not None:
+            self._fence.append(point)
+            self.last_point = point
+            self._fence_prompt()
+            return
+        if self._crossing:
+            if self._cross_anchor is None:
+                self._cross_anchor = point
+                self.prompt("Specify opposite corner:")
+                return
+            ax, ay = self._cross_anchor
+            rect = (min(ax, point[0]), min(ay, point[1]),
+                    max(ax, point[0]), max(ay, point[1]))
+            index = getattr(self.ctx.services, "index", None)
+            entities = []
+            if index is not None:
+                entities = [e for h in index.crossing(rect)
+                            if (e := index.entity(h)) is not None and e.is_alive]
+            self.on_target_entities(entities, rect)
+            self._object_prompt()
+            return
         entity = self.ctx.services.pick_entity(point)
         if entity is None:
             self.ctx.echo(tr("Nothing there."))
             return
         self.apply_to_entity(entity, point)
+
+    def _fence_prompt(self) -> None:
+        if not self._fence:
+            self.prompt("Specify first fence point:")
+        else:
+            self.prompt("Specify next fence point or [Undo]:")
+
+    def on_enter(self) -> None:
+        if self._fence is not None:
+            fence, self._fence = self._fence, None
+            if len(fence) >= 2:
+                self._apply_fence(fence)
+            self._object_prompt()
+            return
+        if self._crossing:
+            self._object_prompt()
+            return
+        self.ctx.finish()
+
+    def _apply_fence(self, fence: list) -> None:
+        """Trim (or extend) every object the fence crosses, at the first
+        point where it crosses it."""
+        index = getattr(self.ctx.services, "index", None)
+        if index is None:
+            return
+        done = set()
+        self._grouping = [None if self._edges_handles is None
+                          else list(self._edges_handles), 0]
+        try:
+            self._fence_pass(index, fence, done)
+        finally:
+            group, self._grouping = self._grouping, None
+            if group[1]:
+                self._history.append(group)
+
+    def _fence_pass(self, index, fence, done) -> None:
+        for a, b in zip(fence, fence[1:]):
+            rect = (min(a[0], b[0]), min(a[1], b[1]),
+                    max(a[0], b[0]), max(a[1], b[1]))
+            for handle in index.crossing(rect):
+                entity = index.entity(handle)
+                if entity is None or not entity.is_alive or handle in done:
+                    continue
+                point = _fence_crossing(entity, a, b)
+                if point is not None:
+                    done.add(handle)
+                    self.apply_to_entity(entity, point)
+
+    def _undo_one(self) -> None:
+        """Undo inside the command: the last change, and the edge list as it
+        was before it (a trimmed edge keeps cutting through its pieces)."""
+        if not self._history:
+            self.ctx.echo(tr("Command has been completely undone."))
+            self._object_prompt()
+            return
+        edges, count = self._history.pop()
+        for _ in range(count):
+            self.ctx.undo_last()
+        self._edges_handles = edges
+        self._object_prompt()
+
+    def preview_segments(self, cursor: Point):
+        if self._fence:
+            points = list(self._fence) + [cursor]
+            return list(zip(points, points[1:]))
+        return []
 
     def on_target_entities(self, entities: list, rect) -> None:
         """Window/crossing over targets: trim each near the rect center."""
@@ -838,6 +963,11 @@ class _TrimExtendBase(Tool):
             name, [entity],
             [(lambda msp, f=f: inherit_style(f(msp), entity))
              for f in factories])
+        edges = None if self._edges_handles is None else list(self._edges_handles)
+        if getattr(self, "_grouping", None) is not None:
+            self._grouping[1] += 1           # one fence, one Undo
+        else:
+            self._history.append([edges, 1])
         self.ctx.execute(cmd)
         if self._edges_handles is not None:
             handle = None
@@ -1339,6 +1469,27 @@ def _entity_bbox(entity):
         ys = [p[1] for p in pts]
         return (min(xs), min(ys), max(xs), max(ys))
     return None
+
+
+def _fence_crossing(entity, a: Point, b: Point):
+    """Where the fence segment a-b first crosses ``entity``, or None."""
+    from ezdxf import path as ezpath
+    from ezdxf.math import Vec2, intersection_line_line_2d
+
+    try:
+        vertices = [Vec2(v) for v in ezpath.make_path(entity).flattening(
+            max(math.dist(a, b) * 1e-4, 1e-9))]
+    except Exception:  # noqa: BLE001 -- an object the fence cannot read
+        return None
+    start, end = Vec2(a), Vec2(b)
+    best = None
+    for p, q in zip(vertices, vertices[1:]):
+        hit = intersection_line_line_2d((start, end), (p, q), virtual=False)
+        if hit is not None:
+            d = start.distance(hit)
+            if best is None or d < best[0]:
+                best = (d, (hit.x, hit.y))
+    return best[1] if best else None
 
 
 def _point_on_entity_near(entity, target: Point):

@@ -148,3 +148,39 @@ def test_dragging_the_text_moves_the_dimension_line_under_dimtmove_0(win):
     assert dim.get_measurement() == pytest.approx(10.0)
     win.history.undo()
     assert dim.dxf.defpoint.y == pytest.approx(-5.0)
+
+
+@pytest.fixture
+def standard_trim(monkeypatch):
+    from core import trimmode
+
+    monkeypatch.setattr(trimmode, "trimextendmode", lambda: 0)
+    monkeypatch.setattr(trimmode, "set_trimextendmode", lambda value: None)
+
+
+def _xs(win):
+    return sorted((round(min(l.dxf.start.x, l.dxf.end.x), 6),
+                   round(max(l.dxf.start.x, l.dxf.end.x), 6))
+                  for l in win.document.modelspace().query("LINE")
+                  if l.dxf.start.y == l.dxf.end.y)
+
+
+def test_trim_fence_and_undo(win, standard_trim):
+    """[Fence/Crossing/.../Undo] (TRIM, p.1951): F and U were "Invalid
+    input."; a fence trims everything it crosses, Undo takes back the
+    whole fence at once."""
+    win.tools.osnap_on = False
+    _type(win, "LINE", "10,-5", "10,5", "")
+    for y in (0, 1, 2):
+        _type(win, "LINE", f"0,{y}", f"20,{y}", "")
+    _type(win, "TRIM")
+    win.tools.on_click(10.0, -4.0)          # the cutting edge
+    _type(win, "")
+    _type(win, "F", "15,-1", "15,3", "")
+    assert _xs(win) == [(0, 10)] * 3
+    _type(win, "U")
+    assert _xs(win) == [(0, 20)] * 3
+    _type(win, "C", "16,-1", "18,0.5")      # typed Crossing: y = 0 only
+    assert _xs(win) == [(0, 10), (0, 20), (0, 20)]
+    _type(win, "")
+    assert win.tools.tool is None

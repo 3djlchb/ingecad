@@ -787,7 +787,7 @@
   "Specify fillet radius <{r}>:": "Precise el radio de empalme <{r}>:",
   "Select second object or shift-select to apply corner:": "Designe el segundo objeto o use Mayús al designar para aplicar esquina:",
   "Select 2D polyline:": "Designe la polilínea 2D:",
-  "Command has been completely undone.": "El comando se ha deshecho completamente.",
+  "Command has been completely undone.": "Se ha deshecho completamente el comando.",
   "Object selected is not a 2D polyline.": "El objeto designado no es una polilínea 2D.",
   "{name} loaded: {count} command(s), one undo step.": "{name} cargado: {count} comando(s), un solo paso de deshacer.",
   "{name}: {error}": "{name}: {error}",
@@ -2028,10 +2028,6 @@
   "Current settings: Projection=UCS, Edge=None, Mode={mode}": "Parámetros actuales: Proyección=SCP, Arista=Ninguna, Modo={mode}",
   "Trim mode|Quick": "Rápido",
   "Trim mode|Standard": "Estándar",
-  "Select object to trim or shift-select to extend or [mOde]:": "Designe objeto que recortar o pulse Mayús y designe para alargar o [mOdo(O)]:",
-  "Select object to trim or shift-select to extend or [cuTting edges/mOde]:": "Designe objeto que recortar o pulse Mayús y designe para alargar o [aristas de corTe(T)/mOdo(O)]:",
-  "Select object to extend or shift-select to trim or [mOde]:": "Designe objeto que alargar o pulse Mayús y designe para recortar o [mOdo(O)]:",
-  "Select object to extend or shift-select to trim or [Boundary edges/mOde]:": "Designe objeto que alargar o pulse Mayús y designe para recortar o [aristas de Borde(B)/mOdo(O)]:",
   "Enter a trim mode option [Quick/Standard] <{mode}>:": "Indique una opción de modo de recorte [Rápido(Q)/Estándar(S)] <{mode}>:",
   "Enter an extend mode option [Quick/Standard] <{mode}>:": "Indique una opción de modo de alargamiento [Rápido(Q)/Estándar(S)] <{mode}>:",
   "To make them annotative: Properties > Annotative > Yes.": "Para hacerlos anotativos: Propiedades > Anotativo > Sí.",
@@ -2056,5 +2052,11 @@
   "Requires an integer.": "Se requiere un número entero.",
   "Nothing to restore.": "Nada que restaurar.",
   "{count} restored.": "{count} restaurado(s).",
-  "Through": "Punto a atravesar"
+  "Through": "Punto a atravesar",
+  "Select object to trim or shift-select to extend or [cuTting edges/Fence/Crossing/mOde/Undo]:": "Designe objeto que recortar o pulse Mayús y designe para alargar o [aristas de corTe(T)/Borde(F)/Captura(C)/mOdo(O)/desHacer(U)]:",
+  "Select object to trim or shift-select to extend or [Fence/Crossing/mOde/Undo]:": "Designe objeto que recortar o pulse Mayús y designe para alargar o [Borde(F)/Captura(C)/mOdo(O)/desHacer(U)]:",
+  "Select object to extend or shift-select to trim or [Boundary edges/Fence/Crossing/mOde/Undo]:": "Designe objeto que alargar o pulse Mayús y designe para recortar o [aristas de Borde(B)/borde(F)/Captura(C)/mOdo(O)/desHacer(U)]:",
+  "Select object to extend or shift-select to trim or [Fence/Crossing/mOde/Undo]:": "Designe objeto que alargar o pulse Mayús y designe para recortar o [Borde(F)/Captura(C)/mOdo(O)/desHacer(U)]:",
+  "Specify first fence point:": "Precise primer punto de borde:",
+  "Specify next fence point or [Undo]:": "Precise punto de borde siguiente o [desHacer(U)]:"
 }
