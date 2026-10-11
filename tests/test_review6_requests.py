@@ -259,3 +259,18 @@ def test_a_dimension_is_a_cota_in_spanish_not_the_menu_word(qapp):
     finally:
         i18n.set_language("en")
     assert pickfilter.display("Dimension") == "Dimension"
+
+
+def test_add_current_scale_on_plain_objects_says_the_missing_step(qapp):
+    win = _window(qapp)
+    try:
+        win.tools._execute(actions.add_text((0, 0), "plain", 2.5))
+        text = win.document.doc.modelspace().query("TEXT")[-1]
+        win.tools.selection = {text.dxf.handle}
+        win._anno_add_btn.click()
+        qapp.processEvents()
+        shown = win.command_line.history.toPlainText()
+        assert "Properties > Annotative" in shown or "Propiedades > Anotativo" in shown
+    finally:
+        win.document.dirty = False
+        win.close()

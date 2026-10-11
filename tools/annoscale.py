@@ -139,6 +139,11 @@ class CurrentScaleTool(Tool):
         chosen = [e for e in entities if annotative.is_annotative(e)]
         if document is None or not chosen:
             self.ctx.echo(tr("No annotative objects selected."))
+            if entities:
+                # the step Rafael could not find (review 6, 44:00-47:00): a
+                # style made annotative does not change what is already drawn
+                self.ctx.echo(tr("To make them annotative: Properties > "
+                                 "Annotative > Yes."))
             self.ctx.finish()
             return
         scale = annotative.scale_or_default(document.doc)
