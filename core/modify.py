@@ -602,8 +602,57 @@ def fillet_with_polylines(first, pick1, second, pick2, radius: float,
     Returns ``(command, "")`` or ``(None, reason)``. GeoCad Yaguarete had
     to add all of it: everything that comes from QGIS is a polyline.
     """
-    from core.actions import ReplaceEntitiesCommand
     from core.editmath import sided_fillet
+
+    def solve(seg1, keep1, seg2, keep2):
+        result = sided_fillet(seg1, keep1, seg2, keep2, radius)
+        if isinstance(result, str):
+            return result
+        _c, t1, t2, center, far1, far2, sweep = result
+        bulge = _arc_bulge(t1, t2, center, sweep) if center else 0.0
+
+        def loose(msp, source):
+            r = math.dist(center, t1)
+            a0 = math.degrees(math.atan2(t1[1] - center[1], t1[0] - center[0]))
+            a1 = math.degrees(math.atan2(t2[1] - center[1], t2[0] - center[0]))
+            if (a1 - a0) % 360.0 > 180.0:
+                a0, a1 = a1, a0
+            return inherit_style(msp.add_arc(center, r, a0, a1), source)
+        return t1, t2, bulge, far1, far2, (loose if center else None)
+
+    return corner_with_polylines("FILLET", first, pick1, second, pick2,
+                                 solve, trim)
+
+
+def chamfer_with_polylines(first, pick1, second, pick2, d1: float, d2: float,
+                           trim: bool = True):
+    """CHAMFER where a picked object is a polyline segment -- the same
+    cases as FILLET (CHAMFER, p. 314), the bevel a straight segment."""
+    from core.editmath import sided_chamfer
+
+    def solve(seg1, keep1, seg2, keep2):
+        result = sided_chamfer(seg1, keep1, seg2, keep2, d1, d2)
+        if isinstance(result, str):
+            return result
+        _c, c1, c2, far1, far2 = result
+
+        def loose(msp, source):
+            return inherit_style(msp.add_line(c1, c2), source)
+        return c1, c2, 0.0, far1, far2, (
+            loose if math.dist(c1, c2) > 1e-12 else None)
+
+    return corner_with_polylines("CHAMFER", first, pick1, second, pick2,
+                                 solve, trim)
+
+
+def corner_with_polylines(name, first, pick1, second, pick2, solve,
+                          trim: bool = True):
+    """The polyline cases FILLET and CHAMFER share. ``solve(seg1, keep1,
+    seg2, keep2)`` answers a reason, or ``(t1, t2, bulge, far1, far2,
+    loose)``: where the corner piece meets each edge, its bulge (0 for a
+    bevel), the ends that stay, and ``loose(msp, style_source)`` building
+    the piece alone for TRIMMODE 0 -- None when there is no piece."""
+    from core.actions import ReplaceEntitiesCommand
 
     def seg_of(entity, pick):
         if entity.dxftype() == "LINE":
@@ -620,20 +669,13 @@ def fillet_with_polylines(first, pick1, second, pick2, radius: float,
         if isinstance(reason, str):
             return None, reason
 
-    def arc_only(result):
-        _c, t1, t2, center, _f1, _f2, _sw = result
-        if center is None:
+    def loose_only(result):
+        loose = result[5]
+        if loose is None:
             return None, "nothing"
-        r = math.dist(center, t1)
-        a0 = math.degrees(math.atan2(t1[1] - center[1], t1[0] - center[0]))
-        a1 = math.degrees(math.atan2(t2[1] - center[1], t2[0] - center[0]))
-        if (a1 - a0) % 360.0 > 180.0:
-            a0, a1 = a1, a0
         source = common_style_source([first, second])
-
-        def build(msp):
-            return inherit_style(msp.add_arc(center, r, a0, a1), source)
-        return ReplaceEntitiesCommand("FILLET", [], [build]), ""
+        return ReplaceEntitiesCommand(
+            name, [], [lambda msp: loose(msp, source)]), ""
 
     # -- one polyline, two of its segments -------------------------------------
     if first is second:
@@ -653,23 +695,45 @@ def fillet_with_polylines(first, pick1, second, pick2, radius: float,
         b = rows[(lo + 1) % len(rows)][:2]
         c = rows[hi][:2]
         d = rows[(hi + 1) % len(rows)][:2]
-        result = sided_fillet((a[0], a[1], b[0], b[1]), a,
-                              (c[0], c[1], d[0], d[1]), d, radius)
+        result = solve((a[0], a[1], b[0], b[1]), a, (c[0], c[1], d[0], d[1]), d)
         if isinstance(result, str):
             return None, result
         if not trim:
-            return arc_only(result)
-        _c, t1, t2, center, _f1, _f2, sweep = result
-        bulge = _arc_bulge(t1, t2, center, sweep) if center else 0.0
+            return loose_only(result)
+        t1, t2, bulge = result[0], result[1], result[2]
         new = rows[:lo + 1] + [(t1[0], t1[1], bulge), (t2[0], t2[1], 0.0)] \
             + rows[hi + 1:]
         if closed and new and math.dist(new[-1][:2], new[0][:2]) < 1e-9:
             new = new[:-1]
         return ReplaceEntitiesCommand(
-            "FILLET", [first], [_poly_factory(first, new, closed)]), ""
+            name, [first], [_poly_factory(first, new, closed)]), ""
+
+    # -- two lines: each trimmed on its picked side, the piece between ---------
+    polys = [e for e in (first, second) if e.dxftype() == "LWPOLYLINE"]
+    if not polys:
+        result = solve(s1, pick1, s2, pick2)
+        if isinstance(result, str):
+            return None, result
+        if not trim:
+            return loose_only(result)
+        t1, t2, _bulge, far1, far2, loose = result
+
+        def kept(entity, seg, far, tangent):
+            # the line keeps its own direction: start stays the start
+            a, b = (far, tangent) if math.dist(seg[:2], far) < 1e-12 \
+                else (tangent, far)
+            if math.dist(a, b) < 1e-12:
+                return None
+            return lambda msp: inherit_style(msp.add_line(a, b), entity)
+
+        source = common_style_source([first, second])
+        factories = [f for f in (kept(first, s1, far1, t1),
+                                 kept(second, s2, far2, t2)) if f]
+        if loose is not None:
+            factories.append(lambda msp: loose(msp, source))
+        return ReplaceEntitiesCommand(name, [first, second], factories), ""
 
     # -- a line or another polyline joins at a polyline's end ------------------
-    polys = [e for e in (first, second) if e.dxftype() == "LWPOLYLINE"]
     if any(p.closed for p in polys):
         return None, "closed"
     if first.dxftype() == "LWPOLYLINE":
@@ -677,8 +741,7 @@ def fillet_with_polylines(first, pick1, second, pick2, radius: float,
         if head_rows is None:
             return None, "not an end"
         a, b = head_rows[-2][:2], head_rows[-1][:2]
-        seg1 = (a[0], a[1], b[0], b[1])
-        keep1 = a
+        seg1, keep1 = (a[0], a[1], b[0], b[1]), a
     else:
         head_rows, seg1, keep1 = None, s1, pick1
     if second.dxftype() == "LWPOLYLINE":
@@ -687,23 +750,21 @@ def fillet_with_polylines(first, pick1, second, pick2, radius: float,
             return None, "not an end"
         tail_rows = _reverse_rows(tail_rows)      # the picked segment first
         c, d = tail_rows[0][:2], tail_rows[1][:2]
-        seg2 = (c[0], c[1], d[0], d[1])
-        keep2 = d
+        seg2, keep2 = (c[0], c[1], d[0], d[1]), d
     else:
         tail_rows, seg2, keep2 = None, s2, pick2
-    result = sided_fillet(seg1, keep1, seg2, keep2, radius)
+    result = solve(seg1, keep1, seg2, keep2)
     if isinstance(result, str):
         return None, result
     if not trim:
-        return arc_only(result)
-    _c, t1, t2, center, far1, far2, sweep = result
-    bulge = _arc_bulge(t1, t2, center, sweep) if center else 0.0
+        return loose_only(result)
+    t1, t2, bulge, far1, far2, _loose = result
     rows = head_rows[:-1] if head_rows is not None else [(far1[0], far1[1], 0.0)]
     rows = rows + [(t1[0], t1[1], bulge), (t2[0], t2[1], 0.0)]
     rows += tail_rows[1:] if tail_rows is not None else [(far2[0], far2[1], 0.0)]
     base = first if first.dxftype() == "LWPOLYLINE" else second
     return ReplaceEntitiesCommand(
-        "FILLET", [first, second], [_poly_factory(base, rows, False)]), ""
+        name, [first, second], [_poly_factory(base, rows, False)]), ""
 
 
 def _factory_for(piece, template):

@@ -18,6 +18,8 @@ Deliberate deviations, each a smaller menu rather than a different one:
 """
 from __future__ import annotations
 
+import math
+
 from core import actions, editmath, modify, trimmode
 from core.i18n import tr
 from tools.base import Point, Tool
@@ -205,25 +207,69 @@ class JoinTool(Tool):
 
 
 class ChamferTool(Tool):
-    """CHAMFER: bevel the corner two lines make, by two distances."""
+    """CHAMFER (reference p. 313): bevel the corner two lines or polyline
+    segments make, by two distances or by a length and an angle.
+
+    The options are AutoCAD's: Undo, Polyline (every corner of one),
+    Distance, Angle, Trim, mEthod, Multiple, and Shift on the second pick
+    for a sharp corner. Each edge keeps the side it was picked on and its
+    own properties. GeoCad Yaguarete had to add most of it (lines only, no
+    layer kept, a zero-length line at distance 0, two options).
+    """
 
     entity_picker = True
-    dist1 = 0.0        # session-sticky, like AutoCAD's
+    dist1 = 0.0        # session-sticky, like AutoCAD's CHAMFERA/CHAMFERB
     dist2 = 0.0
+    length = 0.0       # CHAMFERC
+    angle = 0.0        # CHAMFERD, degrees
+    method = "D"       # CHAMMODE: D(istance) or A(ngle)
+
+    OPTIONS = ("Select first line or "
+               "[Undo/Polyline/Distance/Angle/Trim/mEthod/Multiple]:")
 
     def start(self) -> None:
         self.name = "CHAMFER"
         self._first = None
+        self._first_pick = None
         self._await = None
+        self._multiple = False
+        self._done = 0
         self._announce()
 
     def _announce(self) -> None:
         cls = type(self)
         mode = tr("TRIM") if trimmode.trimmode() else tr("NOTRIM")
-        self.ctx.echo(tr("({mode} mode) Current chamfer Dist1 = {d1}, "
-                         "Dist2 = {d2}", mode=mode,
-                         d1=f"{cls.dist1:g}", d2=f"{cls.dist2:g}"))
-        self.prompt("Select first line or [Distance/Trim]:")
+        if cls.method == "A":
+            self.ctx.echo(tr("({mode} mode) Current chamfer Length = {l}, "
+                             "Angle = {a}", mode=mode, l=f"{cls.length:g}",
+                             a=f"{cls.angle:g}"))
+        else:
+            self.ctx.echo(tr("({mode} mode) Current chamfer Dist1 = {d1}, "
+                             "Dist2 = {d2}", mode=mode,
+                             d1=f"{cls.dist1:g}", d2=f"{cls.dist2:g}"))
+        self._first_prompt()
+
+    def _first_prompt(self) -> None:
+        self._first = None
+        self._first_pick = None
+        self.entity_picker = True
+        self.prompt(self.OPTIONS)
+
+    def _after(self) -> None:
+        self._done += 1
+        if self._multiple:
+            self._first_prompt()
+        else:
+            self.ctx.finish()
+
+    def _value(self, text: str, default: float):
+        if not text.strip():
+            return default
+        value = _number(text)
+        if value is None or value < 0:
+            self.ctx.echo(tr("Requires a positive number."))
+            return None
+        return value
 
     def on_option(self, text: str) -> bool:
         # The resolver first: it turns the localized keyword, or
@@ -232,9 +278,8 @@ class ChamferTool(Tool):
         token = self.option(text) or text.strip().upper()
         cls = type(self)
         if self._await == "d1":
-            value = _number(text)
-            if value is None or value < 0:
-                self.ctx.echo(tr("Requires a positive number."))
+            value = self._value(text, cls.dist1)
+            if value is None:
                 return True
             cls.dist1 = value
             self._await = "d2"
@@ -242,29 +287,70 @@ class ChamferTool(Tool):
                         d=f"{cls.dist1:g}")
             return True
         if self._await == "d2":
-            value = _number(text) if text.strip() else cls.dist1
-            if value is None or value < 0:
-                self.ctx.echo(tr("Requires a positive number."))
+            value = self._value(text, cls.dist1)
+            if value is None:
                 return True
             cls.dist2 = value
+            cls.method = "D"
             self._await = None
-            self._announce()
+            self._first_prompt()
+            return True
+        if self._await == "length":
+            value = self._value(text, cls.length)
+            if value is None:
+                return True
+            cls.length = value
+            self._await = "angle"
+            self.prompt("Specify chamfer angle from the first line <{a}>:",
+                        a=f"{cls.angle:g}")
+            return True
+        if self._await == "angle":
+            value = self._value(text, cls.angle)
+            if value is None:
+                return True
+            cls.angle = value
+            cls.method = "A"
+            self._await = None
+            self._first_prompt()
+            return True
+        if self._await == "method":
+            if token in ("D", "DISTANCE"):
+                cls.method = "D"
+            elif token in ("A", "ANGLE"):
+                cls.method = "A"
+            elif text.strip():
+                self.ctx.echo(tr("Requires Distance or Angle."))
+                return True
+            self._await = None
+            self._first_prompt()
             return True
         if self._await == "trim":
             if token.startswith("T"):
                 trimmode.set_trimmode(True)
             elif token.startswith("N"):
                 trimmode.set_trimmode(False)
-            else:
+            elif text.strip():
                 self.ctx.echo(tr("Requires Trim or No trim."))
                 return True
             self._await = None
-            self._announce()
+            self._first_prompt()
             return True
+        if self._first is not None:
+            return False
         if token in ("D", "DISTANCE"):
             self._await = "d1"
             self.prompt("Specify first chamfer distance <{d}>:",
                         d=f"{cls.dist1:g}")
+            return True
+        if token in ("A", "ANGLE"):
+            self._await = "length"
+            self.prompt("Specify chamfer length on the first line <{d}>:",
+                        d=f"{cls.length:g}")
+            return True
+        if token in ("E", "METHOD"):
+            self._await = "method"
+            self.prompt("Enter trim method [Distance/Angle] <{m}>:",
+                        m=tr("Angle") if cls.method == "A" else tr("Distance"))
             return True
         if token in ("T", "TRIM"):
             self._await = "trim"
@@ -272,10 +358,26 @@ class ChamferTool(Tool):
                         "<{mode}>:",
                         mode=tr("Trim") if trimmode.trimmode() else tr("No trim"))
             return True
+        if token in ("M", "MULTIPLE"):
+            self._multiple = True
+            self._first_prompt()
+            return True
+        if token in ("P", "POLYLINE"):
+            self._await = "polyline"
+            self.prompt("Select 2D polyline:")
+            return True
+        if token in ("U", "UNDO"):
+            if self._done:
+                self.ctx.undo_last()
+                self._done -= 1
+            else:
+                self.ctx.echo(tr("Command has been completely undone."))
+            self._first_prompt()
+            return True
         return False
 
     def on_enter(self) -> None:
-        if self._await == "d2":
+        if self._await in ("d1", "d2", "length", "angle", "method", "trim"):
             self.on_option("")
             return
         self.ctx.finish()
@@ -283,38 +385,105 @@ class ChamferTool(Tool):
     def on_point(self, point: Point) -> None:
         services = self.ctx.services
         entity = services.pick_entity(point) if services else None
-        if entity is None or entity.dxftype() != "LINE":
-            self.ctx.echo(tr("CHAMFER works on pairs of lines."))
+        if self._await == "polyline":
+            self._chamfer_polyline(entity)
+            return
+        if entity is None or entity.dxftype() not in ("LINE", "LWPOLYLINE"):
+            self.ctx.echo(tr("CHAMFER works on lines and polyline segments."))
             return
         if self._first is None:
             self._first = entity
-            self.prompt("Select second line:")
+            self._first_pick = point
+            self.prompt("Select second line or shift-select to apply corner:")
             return
-        if entity is self._first:
+        if entity is self._first and entity.dxftype() == "LINE":
             self.ctx.echo(tr("Pick a different line."))
             return
-        cls = type(self)
-        s1 = _seg(self._first)
-        s2 = _seg(entity)
-        pieces = editmath.chamfer_pieces(s1, s2, cls.dist1, cls.dist2)
-        if pieces is None:
+        distances = self._distances(entity, point)
+        if distances is None:
             self.ctx.echo(tr("The chamfer does not fit those lines."))
-            self.ctx.finish()
+            self._first_prompt() if self._multiple else self.ctx.finish()
             return
-        new1, new2, bevel = pieces
-        factories = [lambda msp, p=bevel: msp.add_line((p[0], p[1]),
-                                                       (p[2], p[3]))]
-        if trimmode.trimmode():
-            factories = [
-                lambda msp, p=new1: msp.add_line((p[0], p[1]), (p[2], p[3])),
-                lambda msp, p=new2: msp.add_line((p[0], p[1]), (p[2], p[3])),
-            ] + factories
-            old = [self._first, entity]
+        d1, d2 = distances
+        command, reason = modify.chamfer_with_polylines(
+            self._first, self._first_pick, entity, point, d1, d2,
+            trim=trimmode.trimmode())
+        if command is None:
+            if reason in ("too large", "nothing"):
+                self.ctx.echo(tr("The chamfer does not fit those lines."))
+            else:
+                self.ctx.echo(tr(_CHAMFER_REASONS.get(
+                    reason, "The chamfer does not fit those lines.")))
+            self._first_prompt() if self._multiple else self.ctx.finish()
+            return
+        self.ctx.execute(command)
+        self._after()
+
+    def _distances(self, entity, point):
+        """(d1, d2) for this pair: Shift = a sharp corner; the Angle
+        method turns its length and angle into the second distance."""
+        cls = type(self)
+        if getattr(self, "shift", False):
+            return 0.0, 0.0
+        if cls.method != "A":
+            return cls.dist1, cls.dist2
+        s1 = _straight(self._first, self._first_pick)
+        s2 = _straight(entity, point)
+        if s1 is None or s2 is None:
+            return None
+        d2 = editmath.chamfer_angle_distance(
+            s1, self._first_pick, s2, point, cls.length, cls.angle)
+        return None if d2 is None else (cls.length, d2)
+
+    def _chamfer_polyline(self, entity) -> None:
+        """Polyline: every corner of one 2D polyline (p. 315)."""
+        self._await = None
+        if entity is None or entity.dxftype() != "LWPOLYLINE":
+            self.ctx.echo(tr("Object selected is not a 2D polyline."))
+            self._first_prompt()
+            return
+        cls = type(self)
+        d1, d2 = (cls.dist1, cls.dist2) if cls.method != "A" else (
+            cls.length, cls.length * math.tan(math.radians(cls.angle)))
+        rows, done, short = editmath.chamfer_polyline(
+            entity.get_points("xyseb"), entity.closed, d1, d2)
+        if done:
+            def factory(msp, e=entity, rows=rows):
+                clone = e.copy()
+                clone.set_points(rows, format="xyseb")
+                msp.add_entity(clone)
+                return clone
+
+            self.ctx.execute(actions.ReplaceEntitiesCommand(
+                "CHAMFER", [entity], [factory]))
+        message = tr("{n} lines were chamfered", n=done)
+        if short:
+            message += ", " + tr("{n} were too short", n=short)
+        self.ctx.echo(message)
+        if done:
+            self._after()
         else:
-            old = []
-        self.ctx.execute(actions.ReplaceEntitiesCommand(
-            "CHAMFER", old, factories))
-        self.ctx.finish()
+            self._first_prompt() if self._multiple else self.ctx.finish()
+
+
+_CHAMFER_REASONS = {
+    "arc": "CHAMFER takes the straight segments of a polyline.",
+    "tilted": "The polyline is not in the drawing's plane.",
+    "not adjacent": "The segments must be adjacent or separated by "
+                    "one segment.",
+    "not an end": "A line joins a polyline at one of its end segments.",
+    "closed": "A line cannot join a closed polyline.",
+    "parallel": "Lines are parallel.",
+    "short": "The polyline has no segment there.",
+}
+
+
+def _straight(entity, pick):
+    """The straight edge picked: a LINE, or a polyline's segment."""
+    if entity.dxftype() == "LINE":
+        return _seg(entity)
+    found = modify.polyline_pick(entity, pick)
+    return None if isinstance(found, str) else found[1]
 
 
 class ArrayTool(Tool):
