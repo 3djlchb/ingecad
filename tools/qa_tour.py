@@ -125,9 +125,18 @@ class Tour:
         return QPoint(int(round(sx)), int(round(sy)))
 
     def move(self, wx: float, wy: float) -> None:
-        from PySide6.QtTest import QTest
+        """A mouse move delivered to the canvas itself. QTest.mouseMove
+        warps the real X pointer, and the move went to whatever window lay
+        over that spot of the user's screen (a terminal, another program)."""
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
 
-        QTest.mouseMove(self.win.viewport, self._pos(wx, wy))
+        vp = self.win.viewport
+        local = QPointF(self._pos(wx, wy))
+        event = QMouseEvent(QEvent.MouseMove, local, QPointF(vp.mapToGlobal(local)),
+                            Qt.NoButton, Qt.NoButton, Qt.NoModifier)
+        QApplication.sendEvent(vp, event)
         self.wait(40)
 
     def click(self, wx: float, wy: float, *, shift=False) -> None:
@@ -148,7 +157,14 @@ class Tour:
         for k in range(1, 9):
             x = a[0] + (b[0] - a[0]) * k / 8
             y = a[1] + (b[1] - a[1]) * k / 8
-            QTest.mouseMove(vp, self._pos(x, y))
+            from PySide6.QtCore import QEvent, QPointF
+            from PySide6.QtGui import QMouseEvent
+            from PySide6.QtWidgets import QApplication
+
+            local = QPointF(self._pos(x, y))
+            QApplication.sendEvent(vp, QMouseEvent(
+                QEvent.MouseMove, local, QPointF(vp.mapToGlobal(local)),
+                Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
             self.wait(15)
         QTest.mouseRelease(vp, Qt.LeftButton, Qt.NoModifier, self._pos(*b))
         self.wait(80)
@@ -217,6 +233,37 @@ class Tour:
     def save(self) -> None:
         (self.out / "report.json").write_text(
             json.dumps(self.steps, ensure_ascii=False, indent=1), encoding="utf-8")
+        (self.out / "index.html").write_text(self.html(), encoding="utf-8")
+
+    def html(self) -> str:
+        """A page to read the tour: per scenario its checks and captures."""
+        import html as h
+
+        checks = [s for s in self.steps if s["kind"] == "check"]
+        failed = sum(1 for s in checks if not s["ok"])
+        out = ["<!doctype html><meta charset=utf-8><title>Recorrido IngeCAD</title>",
+               "<style>body{font:15px system-ui;background:#1e1e22;color:#ddd;"
+               "max-width:1100px;margin:auto;padding:16px}img{width:100%;"
+               "border:1px solid #444;margin:6px 0 18px}h2{color:#8fd16a;"
+               "border-top:1px solid #444;padding-top:18px}.ok{color:#8fd16a}"
+               ".fail{color:#ff6b6b;font-weight:bold}.cap{color:#aaa}"
+               "pre{white-space:pre-wrap;color:#aaa;font-size:12px}</style>",
+               f"<h1>Recorrido de prueba</h1><p>{len(checks)} comprobaciones, "
+               f"<span class={'fail' if failed else 'ok'}>{failed} fallidas</span></p>"]
+        for s in self.steps:
+            if s["kind"] == "title":
+                out.append(f"<h2>{h.escape(s['scenario'])}</h2><p>{h.escape(s['text'])}</p>")
+            elif s["kind"] == "check":
+                cls, mark = ("ok", "✔") if s["ok"] else ("fail", "✘")
+                out.append(f"<div class={cls}>{mark} {h.escape(s['label'])}</div>")
+                if s["detail"] and not s["ok"]:
+                    out.append(f"<pre>{h.escape(s['detail'])}</pre>")
+            elif s["kind"] == "shot":
+                out.append(f"<p class=cap>{h.escape(s['caption'])}</p>"
+                           f"<img src='{h.escape(s['file'])}' loading=lazy>")
+            elif s["kind"] == "note":
+                out.append(f"<p>{h.escape(s['text'])}</p>")
+        return "\n".join(out)
 
 
 def run(names: list[str], out: Path) -> int:

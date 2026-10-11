@@ -175,8 +175,6 @@ def scenario_boundary_curves(t):
     rows = list(poly.get_points("xyb"))
     t.check(len(rows) == 4 and sum(1 for r in rows if abs(r[2]) > 1e-9) == 1,
             "4 vértices y un tramo curvo", rows)
-    t.type("CHPROP")
-    t.esc()
     t.frame(8.3, 7.6, 9.3, 8.6)          # zoom onto the arc
     t.shot("zoomed", "Muy de cerca sobre el arco: el contorno (BOUNDARY) coincide con el arco")
 
@@ -450,8 +448,14 @@ def scenario_dyn_tooltip_left(t):
     t.type("0,0")
     t.move(0, 0)
     x0, y0, x1, y1 = win.viewport._view_world_rect()
-    t.move(x0 + (x1 - x0) * 0.02, (y0 + y1) / 2 + (y1 - y0) * 0.1)
-    t.wait(300)
+    target = (x0 + (x1 - x0) * 0.02, (y0 + y1) / 2 + (y1 - y0) * 0.1)
+    for _ in range(5):                   # the window may still be settling
+        t.focus(win)
+        t.move(target[0] + (x1 - x0) * 0.01, target[1])
+        t.move(*target)
+        t.wait(300)
+        if win.tools._cursor is not None:
+            break
     from views.viewport import dyn_tooltip_origin  # noqa: F401 -- the rule under test
     t.check(win.tools.dyn_on and win.tools._cursor is not None,
             "el cursor llegó al lienzo con DIN encendido", win.tools._cursor)
