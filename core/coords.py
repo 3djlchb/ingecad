@@ -60,6 +60,12 @@ def parse_point(
     can treat it as a keyword/option instead).
     """
     text = text.strip()
+    if text == "@":
+        # AutoCAD's "@": the last point itself (@0,0) -- how its manual
+        # says to break an object at one point
+        if last_point is None:
+            raise CoordinateError("relative input needs a previous point")
+        return ParsedPoint(last_point[0], last_point[1])
 
     def relative(prefix) -> bool:
         if prefix == "@":

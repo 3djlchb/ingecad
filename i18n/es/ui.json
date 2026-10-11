@@ -700,6 +700,7 @@
   "varies": "varía",
   "{name} is already open.": "{name} ya está abierto.",
   "All layouts": "Todas las presentaciones",
+  "Closed objects cannot be broken at a single point.": "Los objetos cerrados no se pueden partir en un solo punto.",
   "Enter new layer name:": "Indique el nuevo nombre de la capa:",
   "Enter new layout name <{name}>:": "Indique nombre de la nueva presentación <{name}>:",
   "Enter new layout name:": "Indique nuevo nombre de la presentación:",

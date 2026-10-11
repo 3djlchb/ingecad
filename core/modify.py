@@ -315,12 +315,23 @@ def _sweep(a0: float, a1: float) -> float:
     return (a1 - a0) % 360.0
 
 
+class ClosedAtOnePoint(ValueError):
+    """BREAK at a single point on a circle or a closed polyline: "Closed
+    objects such as circles cannot be broken at a single point" (BREAK,
+    p. 271). A circle used to vanish, a closed polyline to lose its
+    closing segment."""
+
+
+BREAKABLE = frozenset({"LINE", "CIRCLE", "ARC", "LWPOLYLINE"})
+
+
 def break_pieces(entity, first: Point, second: Point):
     """What survives a BREAK, as a list of geometry descriptions.
 
     Each piece is ``("LINE", p1, p2)`` or ``("ARC", center, radius, a0, a1)``
     or ``("LWPOLYLINE", points_xyseb, closed)``. An empty list means the whole
-    object goes; None means this type cannot be broken.
+    object goes; None means this type cannot be broken. Raises
+    ClosedAtOnePoint for a closed object broken at one point.
     """
     kind = entity.dxftype()
 
@@ -343,7 +354,7 @@ def break_pieces(entity, first: Point, second: Point):
         a1 = _angle_on_circle(c, first)
         a2 = _angle_on_circle(c, second)
         if abs(_sweep(a2, a1)) < 1e-9:
-            return []
+            raise ClosedAtOnePoint(kind)
         return [("ARC", (c.x, c.y), r, a2, a1)]
 
     if kind == "ARC":
@@ -366,59 +377,145 @@ def break_pieces(entity, first: Point, second: Point):
     return None
 
 
-def _polyline_position(points, closed: bool, point: Point):
-    """(segment index, t within it) of the point nearest to the polyline."""
-    best = None
-    spans = list(zip(points, points[1:]))
+def _bulge_arc(a: Point, b: Point, bulge: float):
+    """(centre, radius, start angle, signed sweep) of a bulged segment."""
+    theta = 4.0 * math.atan(bulge)
+    chord = math.dist(a, b)
+    radius = chord / (2.0 * abs(math.sin(theta / 2.0)))
+    mx, my = (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+    # the centre sits off the chord's midpoint, to the left for a CCW arc
+    h = radius * math.cos(theta / 2.0) * (1 if bulge > 0 else -1)
+    ux, uy = (b[0] - a[0]) / chord, (b[1] - a[1]) / chord
+    cx, cy = mx - uy * h, my + ux * h
+    return (cx, cy), radius, math.atan2(a[1] - cy, a[0] - cx), theta
+
+
+def _polyline_spans(raw, closed: bool) -> list:
+    """[(start, end, bulge)] of every segment, the closing one included."""
+    points = [(p[0], p[1]) for p in raw]
+    spans = [(points[k], points[k + 1], raw[k][4])
+             for k in range(len(points) - 1)]
     if closed and len(points) > 2:
-        spans.append((points[-1], points[0]))
-    for index, (a, b) in enumerate(spans):
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        length2 = dx * dx + dy * dy
-        t = 0.0 if length2 == 0 else max(0.0, min(
-            1.0, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length2))
-        px, py = a[0] + t * dx, a[1] + t * dy
-        distance = math.hypot(point[0] - px, point[1] - py)
+        spans.append((points[-1], points[0], raw[-1][4]))
+    return spans
+
+
+def _on_span(a: Point, b: Point, bulge: float, point: Point):
+    """(distance, u, foot) of ``point`` on one segment; u runs 0..1 along
+    its length for a line, along its sweep for an arc."""
+    if abs(bulge) > 1e-12 and math.dist(a, b) > 1e-12:
+        (cx, cy), r, start, sweep = _bulge_arc(a, b, bulge)
+        angle = math.atan2(point[1] - cy, point[0] - cx)
+        rel = (angle - start) % math.tau if sweep > 0 \
+            else (start - angle) % math.tau
+        if rel <= abs(sweep):
+            u = rel / abs(sweep)
+            at = start + sweep * u
+            foot = (cx + r * math.cos(at), cy + r * math.sin(at))
+            return abs(math.hypot(point[0] - cx, point[1] - cy) - r), u, foot
+        da, db = math.dist(point, a), math.dist(point, b)
+        return (da, 0.0, a) if da <= db else (db, 1.0, b)
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length2 = dx * dx + dy * dy
+    u = 0.0 if length2 == 0 else max(0.0, min(
+        1.0, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length2))
+    foot = (a[0] + u * dx, a[1] + u * dy)
+    return math.dist(point, foot), u, foot
+
+
+def _polyline_position(spans, point: Point):
+    """(distance, segment index, u, foot) of the nearest place on it."""
+    best = None
+    for index, (a, b, bulge) in enumerate(spans):
+        distance, u, foot = _on_span(a, b, bulge, point)
         if best is None or distance < best[0]:
-            best = (distance, index, t, (px, py))
+            best = (distance, index, u, foot)
     return best
 
 
-def _break_polyline(entity, first: Point, second: Point):
-    """Split a polyline at two points, keeping the outer runs.
+def _part_bulge(bulge: float, u0: float, u1: float) -> float:
+    """The bulge of the part u0..u1 of a bulged segment: the same circle,
+    a share of the sweep. Dropping it turned a cut arc into a chord."""
+    if abs(bulge) < 1e-12:
+        return 0.0
+    return math.tan(4.0 * math.atan(bulge) * (u1 - u0) / 4.0)
 
-    Bulges of untouched segments ride along; a segment that is cut has its
-    bulge dropped, because half of an arc with the same bulge is a different
-    arc and inventing one silently would move the drawing.
+
+def _break_polyline(entity, first: Point, second: Point):
+    """Split a polyline at two points and remove what lies between.
+
+    An open one keeps its two outer runs. A closed one keeps one open run:
+    what is left going from the second point round to the first -- the
+    part from the first to the second, in the polyline's own direction,
+    goes (as a circle loses its part counterclockwise from the first).
+    A cut arc segment stays an arc: its parts keep their share of the
+    sweep.
     """
     raw = ocs.rows_wcs(entity, entity.get_points("xyseb"))
-    points = [(p[0], p[1]) for p in raw]
+    if len(raw) < 2:
+        return None
     closed = bool(entity.closed)
-    a = _polyline_position(points, closed, first)
-    b = _polyline_position(points, closed, second)
+    spans = _polyline_spans(raw, closed)
+    a = _polyline_position(spans, first)
+    b = _polyline_position(spans, second)
     if a is None or b is None:
         return None
-    if (a[1], a[2]) > (b[1], b[2]):
-        a, b = b, a
-    _da, i1, t1, cut1 = a
-    _db, i2, t2, cut2 = b
 
     def row(x, y, bulge=0.0):
         return (x, y, 0.0, 0.0, bulge)
 
-    head = [row(*p, raw[k][4] if k < i1 else 0.0)
-            for k, p in enumerate(points[:i1 + 1])]
-    head.append(row(*cut1))
-    tail = [row(*cut2, 0.0)]
-    tail.extend(row(*p, raw[k][4])
-                for k, p in enumerate(points) if k > i2)
+    if closed:
+        if a[1] == b[1] and abs(a[2] - b[2]) < 1e-12:
+            raise ClosedAtOnePoint("LWPOLYLINE")
+        # walk from the second cut, forward round the closure, to the first
+        _d, i2, u2, cut2 = b
+        _d, i1, u1, cut1 = a
+        n = len(spans)
+        rows = []
+        same = i1 == i2 and u1 > u2
+        if same:                      # both cuts on one segment, second first
+            rows.append(row(*cut2, _part_bulge(spans[i2][2], u2, u1)))
+            rows.append(row(*cut1))
+            return [("LWPOLYLINE", _dedupe(rows), False)]
+        rows.append(row(*cut2, _part_bulge(spans[i2][2], u2, 1.0)))
+        k = (i2 + 1) % n
+        while k != i1:
+            start, _end, bulge = spans[k]
+            rows.append(row(*start, bulge))
+            k = (k + 1) % n
+        rows.append(row(*spans[i1][0], _part_bulge(spans[i1][2], 0.0, u1)))
+        rows.append(row(*cut1))
+        return [("LWPOLYLINE", _dedupe(rows), False)]
 
-    pieces = []
-    if len(head) > 1:
-        pieces.append(("LWPOLYLINE", head, False))
-    if len(tail) > 1:
-        pieces.append(("LWPOLYLINE", tail, False))
-    return pieces
+    if (a[1], a[2]) > (b[1], b[2]):
+        a, b = b, a
+    _da, i1, u1, cut1 = a
+    _db, i2, u2, cut2 = b
+    head = [row(*spans[k][0], spans[k][2]) for k in range(i1)]
+    head.append(row(*spans[i1][0], _part_bulge(spans[i1][2], 0.0, u1)))
+    head.append(row(*cut1))
+    tail = [row(*cut2, _part_bulge(spans[i2][2], u2, 1.0))]
+    tail.extend(row(*spans[k][1], spans[k + 1][2] if k + 1 < len(spans) else 0.0)
+                for k in range(i2, len(spans)))
+
+    def useful(rows):
+        return len(rows) > 1 and any(
+            math.dist(rows[k][:2], rows[k + 1][:2]) > 1e-9
+            for k in range(len(rows) - 1))
+
+    return [("LWPOLYLINE", piece, False)
+            for piece in (_dedupe(head), _dedupe(tail)) if useful(piece)]
+
+
+def _dedupe(rows) -> list:
+    """Drop a vertex repeated where a cut fell exactly on one."""
+    out = []
+    for r in rows:
+        if out and math.dist(out[-1][:2], r[:2]) < 1e-9:
+            out[-1] = (out[-1][0], out[-1][1], 0.0, 0.0, r[4])
+            continue
+        out.append(r)
+    return out
 
 
 def _factory_for(piece, template):

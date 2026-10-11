@@ -133,7 +133,7 @@ class BreakTool(Tool):
             if entity is None:
                 self.prompt("Nothing selected. Select object:")
                 return
-            if modify.break_pieces(entity, point, point) is None:
+            if entity.dxftype() not in modify.BREAKABLE:
                 self.ctx.echo(
                     tr("{kind} cannot be broken.", kind=entity.dxftype()))
                 self.ctx.finish()
@@ -142,17 +142,25 @@ class BreakTool(Tool):
             # Picking the object also sets the first break point (BREAK,
             # p.269) — until the user says First point.
             self._first = point
+            self.last_point = point          # what "@" answers next
             self.entity_picker = False
             self.prompt("Specify second break point or [First point]:")
             return
 
         if self._await_first:
             self._first = point
+            self.last_point = point
             self._await_first = False
             self.prompt("Specify second break point:")
             return
 
-        command = modify.break_entity(self._entity, self._first, point)
+        try:
+            command = modify.break_entity(self._entity, self._first, point)
+        except modify.ClosedAtOnePoint:
+            self.ctx.echo(tr("Closed objects cannot be broken at a single "
+                             "point."))
+            self.ctx.finish()
+            return
         if command is None:
             self.ctx.echo(tr("{kind} cannot be broken.",
                              kind=self._entity.dxftype()))
