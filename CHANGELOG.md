@@ -1,5 +1,76 @@
 # Changelog
 
+## v0.6.7 — unreleased
+
+The colleague's drawing, edited as its author would: every dimension of a
+1576-plan corpus redrawn in place and compared with what the author's CAD
+drew, a YouTuber's whole staircase plan (drawn in Open CAD Studio, on
+camera) drawn again in IngeCAD, and what testers and GeoCad Yaguareté's
+author ran into. Plus drawing tabs and associative dimensions.
+
+### Several drawings, one window
+- **Drawing tabs** (#71): several drawings open in one window, each with
+  its own view; a drawing opens where its author left it.
+- **Copy in one IngeCAD window and paste in another** (#75).
+
+### Dimensions as their author drew them
+- **Associative dimensions** (DIMASSOC 2): a dimension follows the object
+  it measures, and the tie survives opening and saving DWG.
+- **Editing a colleague's dimension keeps it as it was drawn**: its text
+  height (a fixed-height text style no longer grows 305 times), its
+  number (aligned dimensions read 0, zeros and decimals changed, a
+  negative DIMLFAC read negative, halves rounded down, near-vertical
+  dimensions at UTM coordinates rounded to whole units), hand-placed text
+  where the author put it, suppressed arrows suppressed, angular
+  dimensions on the right side and with the right points (also fixed in
+  LibreDWG, upstream #1438), arc lengths without a stray "( ".
+  99.5 % of the corpus's linear dimensions now redraw identical.
+- **ROTATE, SCALE and MIRROR redraw a dimension** instead of turning its
+  picture: readable text, the new length, copies where they belong.
+- **Dragging a dimension's text carries its line** (DIMTMOVE 0).
+- **DIMANGULAR as AutoCAD draws it**: live, on polylines, with extension
+  lines and degrees/minutes/seconds.
+- The **dimension style editor** writes only what you changed (OK no
+  longer turned 0.0025 m text into 0.01), takes metric sizes, and shows
+  every tab.
+
+### Commands as an AutoCAD user types them
+- **MOVE, COPY, STRETCH**: Displacement, and Enter takes the first point
+  as the displacement; **COPY** Exit and Undo; **ROTATE, SCALE** Copy;
+  **UNDO** takes a count; **OOPS**; **TRIM, EXTEND** Fence, Crossing, Undo,
+  Quick and Standard modes, arcs extended along their circle; **FILLET**
+  and **CHAMFER** on polylines with all their options; **MULTIPLE**;
+  typed answers at "Select objects" (ALL, Last, Previous, Window…).
+- **ARRAY** asks only the spacings it needs; **OFFSET** starts at Through;
+  **TEXT** ends on an empty line; **EXPLODE** shows a block's attribute
+  definitions.
+- **DIMASSOC, CELTSCALE, DIMSCALE, LWEIGHT, LWDISPLAY, ZOOMFACTOR, SETVAR,
+  PROPERTIES, REDRAW, TEXTEDIT** and AutoCAD's aliases for them (R, CH,
+  PR, ED…), which used to run other commands.
+- **Objects on a locked layer can no longer be erased or moved.**
+- **Undo gives back the whole object**: dimension blocks, polyline
+  vertices, block attributes, hatch patterns.
+- **TRIM, EXTEND, BREAK, OFFSET and JOIN keep a contour's height and
+  width**, and PEDIT Reverse its widths.
+- **Linetypes**: AutoCAD's Linetype Manager, -LINETYPE, acadiso.lin in
+  metric drawings, CELTSCALE and PSLTSCALE.
+
+### Drawings in metres, on screen and on paper
+- **Dashes and dots show** at the linetype scale a drawing in metres needs.
+- **A Model-tab plot carries the layers' lineweights**; Plot gets a
+  custom scale ("1000 mm = 25 units"), "Plot object lineweights" and a
+  preview.
+- **TEXT, MTEXT and MLEADER start at a paper size** in the drawing's
+  units, not 2.5 m.
+- **Polyline widths survive Save as DWG and opening a DWG** (LibreDWG,
+  upstream #1437): 962 polylines in 44 of 197 corpus plans opened thin.
+
+### Smaller
+- Object snaps reach inside block inserts; ZOOM Window with snaps (#80);
+  BOUNDARY keeps curves (#83); Intersection finds crossing curves (#82);
+  the Properties panel takes a decimal comma; four behaviours GeoCad
+  Yaguareté had to patch; the rest of Rafael's sixth and seventh reviews.
+
 ## v0.6.6 — 2026-10-09
 
 The colleague's drawing, without scares: what stopped the people already
