@@ -970,12 +970,19 @@ class TransformCommand(Command):
         document.dirty = True
 
     def undo(self, document) -> None:
+        global _ORPHAN_BLOCKS
         from ezdxf.math import Matrix44
 
         restored = set()
-        for e, before in self._before:
-            _restore_entity(e, before)
-            restored.add(id(e))
+        _ORPHAN_BLOCKS = set()
+        try:
+            for e, before in self._before:
+                _restore_entity(e, before)
+                restored.add(id(e))
+            orphans = _ORPHAN_BLOCKS
+        finally:
+            _ORPHAN_BLOCKS = None
+        drop_unreferenced_dim_blocks(document.doc, orphans)
         self._before = []
         inverse = Matrix44(self.matrix)
         inverse.inverse()
@@ -1079,8 +1086,7 @@ class CopyEntitiesCommand(Command):
     def undo(self, document) -> None:
         msp = self.space(document)
         self.removed_handles = [c.dxf.handle for c in self.copies]
-        for clone in self.copies:
-            delete_with_dim_block(document, msp, clone)
+        delete_with_dim_blocks(document, msp, self.copies)
         self.copies = []
         document.dirty = True
 
@@ -1107,8 +1113,7 @@ class ReplaceEntitiesCommand(Command):
     def undo(self, document) -> None:
         msp = self.space(document)
         self.removed_handles = [e.dxf.handle for e in self.new_entities]
-        for e in self.new_entities:
-            delete_with_dim_block(document, msp, e)
+        delete_with_dim_blocks(document, msp, self.new_entities)
         self.new_entities = []
         for e in self.old_entities:
             msp.add_entity(e)
@@ -1305,9 +1310,9 @@ class ExplodeCommand(Command):
         msp = self.space(document)
         self.removed_handles = [v.dxf.handle
                                 for _o, parts in self.pieces for v in parts]
-        for original, parts in self.pieces:
-            for v in parts:
-                delete_with_dim_block(document, msp, v)
+        delete_with_dim_blocks(
+            document, msp, [v for _o, parts in self.pieces for v in parts])
+        for original, _parts in self.pieces:
             msp.add_entity(original)
         self.pieces = []
         document.dirty = True
@@ -1940,14 +1945,52 @@ def _drop_dim_block(document, name) -> None:
             pass
 
 
+def delete_with_dim_blocks(document, space, entities) -> None:
+    """Delete ``entities`` from ``space``; their DIMENSIONs take their *D
+    blocks along unless something else still draws them. An undo that
+    deleted copied or exploded dimensions left their blocks for Save to
+    write. One pass over the drawing for all of them: asking per dimension
+    froze the undo of a big COPY for 2.4 s (release bench, Plaza Yanque)."""
+    blocks = set()
+    for entity in entities:
+        if entity.dxftype() == "DIMENSION":
+            name = entity.dxf.get("geometry", None)
+            if name:
+                blocks.add(name)
+        space.delete_entity(entity)
+    drop_unreferenced_dim_blocks(document.doc, blocks)
+
+
+def drop_unreferenced_dim_blocks(doc, blocks) -> None:
+    """Delete the *D blocks among ``blocks`` that nothing draws any more,
+    in one pass over the drawing."""
+    blocks = {b for b in blocks if b and b in doc.blocks}
+    if not blocks:
+        return
+    from core.annotative import _subclass_tags
+
+    used = set()
+    for e in doc.entitydb.values():
+        if not e.is_alive:
+            continue
+        kind = e.dxftype()
+        if kind in ("DIMENSION", "ARC_DIMENSION"):
+            name = e.dxf.get("geometry", None)
+            if name in blocks:
+                used.add(name)
+        elif kind.endswith("DIMOBJECTCONTEXTDATA_CLASS"):
+            for sub in _subclass_tags(e):
+                used.update(v for c, v in sub if c == 2 and v in blocks)
+    for name in blocks - used:
+        try:
+            doc.blocks.delete_block(name, safe=False)
+        except Exception:
+            pass
+
+
 def delete_with_dim_block(document, space, entity) -> None:
-    """Delete ``entity`` from ``space``; a DIMENSION takes its *D block
-    along unless something else still draws it. An undo that deleted
-    copied or exploded dimensions left their blocks for Save to write."""
-    block = entity.dxf.get("geometry", None) \
-        if entity.dxftype() == "DIMENSION" else None
-    space.delete_entity(entity)
-    _drop_dim_block(document, block)
+    """One entity: see delete_with_dim_blocks."""
+    delete_with_dim_blocks(document, space, [entity])
 
 
 def rerender_dimension(document, dim) -> None:
@@ -2690,6 +2733,12 @@ def snapshot_entity(entity):
     return snap
 
 
+#: While a command restores many dimensions, the blocks they let go of are
+#: gathered here and checked in one pass (see TransformCommand.undo): one
+#: pass per dimension made undoing ROTATE over a plan quadratic.
+_ORPHAN_BLOCKS: set | None = None
+
+
 def _restore_dimension_block(entity, snapshot) -> None:
     """Give a restored DIMENSION its snapshot's block, content and all."""
     doc = entity.doc
@@ -2716,14 +2765,11 @@ def _restore_dimension_block(entity, snapshot) -> None:
 
     # an annotative dimension's other scales follow its restored state
     refresh_scale_blocks(entity)
-    if current and current != name and current in doc.blocks:
-        from core.annotative import block_referenced
-
-        if not block_referenced(doc, current):
-            try:
-                doc.blocks.delete_block(current, safe=False)
-            except Exception:
-                pass
+    if current and current != name:
+        if _ORPHAN_BLOCKS is not None:
+            _ORPHAN_BLOCKS.add(current)      # checked once, by the caller
+        else:
+            drop_unreferenced_dim_blocks(doc, {current})
 
 
 def _restore_entity(entity, snapshot) -> None:
