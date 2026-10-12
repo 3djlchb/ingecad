@@ -22,7 +22,7 @@ ODA with its points (swapped before). With IngeCAD's sector fix in
 `core/ezdxf_patches.py`, 132 of 138 redraw to the author's own text (0
 before; the rest are a `\M+` degree sign and one extra text). `make check`
 286/0; `dwg_fuzz` 500 seeds identical; 150 corpus drawings read with the
-same entity counts.
+same entity counts. Upstream: #1438.
 
 ## 2026-10-11: polyline widths survive both ways
 
