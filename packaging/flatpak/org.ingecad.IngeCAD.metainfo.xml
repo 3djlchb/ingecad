@@ -82,6 +82,12 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.6.7" date="2026-10-11">
+      <description>
+        <p>Drawing tabs and associative dimensions. A colleague's dimensions keep their author's text, number and position when edited, rotated, scaled or mirrored; AutoCAD's command options (MOVE Displacement, ROTATE and SCALE Copy, TRIM Fence, UNDO with a count, OOPS); locked layers that protect their objects; an undo that gives back the whole object; dashed linetypes and lineweights that plot right in drawings in metres; polyline widths that survive DWG.</p>
+        <p xml:lang="es">Pestañas de dibujo y cotas asociativas. Las cotas de un colega conservan el texto, el número y la posición de su autor al editarlas, girarlas, escalarlas o reflejarlas; las opciones de comando de AutoCAD (Desplazamiento en DESPLAZA, Copia en GIRA y ESCALA, Borde en RECORTA, DESHACER con número, UY); capas bloqueadas que protegen sus objetos; un deshacer que devuelve el objeto completo; tipos de línea y grosores que se trazan bien en dibujos en metros; anchos de polilínea que sobreviven al DWG.</p>
+      </description>
+    </release>
     <release version="0.6.6" date="2026-10-09">
       <description>
         <p>External references that survive Save as DWG, INSERT of another drawing, copy and paste between drawings with their blocks and styles, model plots on white paper and at 1:1, 1:2, 2:1, radius and diameter dimensions to the standard, annotative scales for existing objects, point styles, grips that obey ORTHO and object snaps, a polyline that snaps to its own points, TEXT height and angle by mouse, a selection filter by type, and saving without freezing the window. First Windows version.</p>

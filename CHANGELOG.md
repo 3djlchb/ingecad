@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.6.7 — unreleased
+## v0.6.7 — 2026-10-11
 
 The colleague's drawing, edited as its author would: every dimension of a
 1576-plan corpus redrawn in place and compared with what the author's CAD

@@ -31,7 +31,7 @@ and IngePresupuestos (construction budgeting).
   trim/offset/extend, survey points with elevations, and printing to scale.
   Not a feature-for-feature AutoCAD clone.
 
-## Status — v0.6.6
+## Status — v0.6.7
 
 What works today:
 
@@ -68,7 +68,8 @@ What works today:
   DWG r2000 (LibreDWG, bundled), with a silent verified-save check.
 - **Classic interface**: command line at the bottom with AutoCAD aliases
   (`L`, `C`, `M`, `TR`, `Z`+`E` …), dark model space, dockable Layers /
-  Properties / Styles panels. Your own aliases go in `acad.pgp`, same syntax
+  Properties / Styles panels, **drawing tabs** to keep several drawings open
+  in one window, and copy/paste between IngeCAD windows. Your own aliases go in `acad.pgp`, same syntax
   as AutoCAD's (*Tools ▸ Customize ▸ Edit Program Parameters*, then
   `REINIT`); a Spanish AutoCAD file works as it is (`DE, *DESPLAZA`).
 - **Paper space like AutoCAD**: Model/Layout tabs and **the sheet itself is
@@ -90,6 +91,9 @@ What works today:
   every command with AutoCAD's own options (`Text` with `<>`, `Angle`,
   `Rotated`, `Quadrant`, `Partial`…) and the official prompts, plus the
   **Dimension Style Manager** with its five tabs and a live preview.
+  **Associative dimensions** (`DIMASSOC` 2) follow the object they measure,
+  and a colleague's dimensions keep their author's text, number and
+  position when edited, moved, rotated or mirrored.
 - **Layers like AutoCAD's**: the properties table (status, on, freeze, lock,
   colour, linetype, lineweight, plot, description) with live search, and the
   `-LAYER` command line with wildcards for the keyboard-only flow.
@@ -97,7 +101,10 @@ What works today:
   (polylines and arcs included, distance by mouse) / TRIM / EXTEND / FILLET /
   CHAMFER / STRETCH / BREAK / JOIN / ARRAY / MATCHPROP / PEDIT / EXPLODE,
   grips, window/crossing selection, clipboard copy/paste, and ROTATE/SCALE
-  show the result turning live under the cursor.
+  show the result turning live under the cursor — with AutoCAD's options
+  (MOVE/COPY Displacement, ROTATE/SCALE Copy, TRIM Fence, UNDO with a count,
+  OOPS), locked layers that protect their objects, and an undo that gives
+  back the whole object. Linetypes through AutoCAD's Linetype Manager.
 - **The MTEXT in-place editor**: text edits on the canvas at its real size
   with the classic Text Formatting toolbar (style, font, height, bold,
   italic, underline, overline, colour), the ruler with indents, tab stops
