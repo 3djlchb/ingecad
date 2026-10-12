@@ -72,3 +72,17 @@ def test_the_custom_scale_reads_mm_per_unit(qapp):
     dialog.reject()
     win.document.dirty = False
     win.close()
+
+
+def test_plotted_pens_have_butt_ends(qapp):
+    """Qt's square cap stretched every dash by half a pen each way and
+    closed the gaps of a fine HIDDEN line on paper; AutoCAD plots butt."""
+    from PySide6.QtCore import Qt
+
+    document = Document.new()
+    document.modelspace().add_line((0, 0), (1, 0))
+    scene = pdf_out.build_graphics_scene(document)
+    pdf_out._use_physical_pens(scene, 40.0)
+    caps = {item.pen().capStyle() for item in scene.items()
+            if hasattr(item, "pen")}
+    assert caps == {Qt.FlatCap}

@@ -190,6 +190,9 @@ def _use_physical_pens(scene, mm_per_unit: float = 1.0,
         width_mm = max(pen.widthF() * _PT_TO_MM, _MIN_PLOT_MM) \
             if lineweights else _MIN_PLOT_MM
         pen.setWidthF(width_mm / mm_per_unit)
+        # butt ends, AutoCAD's plot default: Qt's square cap stretched every
+        # dash by half a pen each way, closing the gaps of a fine HIDDEN
+        pen.setCapStyle(Qt.FlatCap)
         item.setPen(pen)
 
 
