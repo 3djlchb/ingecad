@@ -810,6 +810,32 @@ def transform_entity(entity, matrix) -> None:
         transform_viewport(entity, matrix)
 
 
+def _is_translation(matrix) -> bool:
+    """True when ``matrix`` only moves: a MOVE or a COPY."""
+    from ezdxf.math import Vec3
+
+    origin = matrix.transform(Vec3(0, 0, 0))
+    for axis in (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)):
+        if not (matrix.transform(axis) - origin).isclose(axis, abs_tol=1e-12):
+            return False
+    return True
+
+
+def redraw_transformed_dimension(document, dim) -> None:
+    """A dimension that was rotated, mirrored or scaled is drawn afresh, as
+    AutoCAD redraws it: transforming its block like a picture left the text
+    upside down after ROTATE 90, the copies of a MIRROR on top of the
+    originals, and the old number after SCALE (0.28 on a 0.56 run, at twice
+    the height). A MOVE keeps the author's block stroke for stroke."""
+    from core.ezdxf_patches import reading_angle, upright_dimension
+
+    upright_dimension(dim)
+    if dim.dxf.hasattr("text_rotation"):
+        # a user text angle turned with the drawing reads the right way up
+        dim.dxf.text_rotation = reading_angle(float(dim.dxf.text_rotation))
+    rerender_dimension(document, dim)
+
+
 def _hatch_direction(entity):
     """A patterned hatch's pattern before a MIRROR, or None."""
     if entity.dxftype() not in ("HATCH", "MPOLYGON") \
@@ -923,7 +949,8 @@ class TransformCommand(Command):
             kind = e.dxftype()
             text = readable and kind in mirrtext.TEXT_TYPES
             before = None
-            if (self.upright and kind in ocs.OCS_TYPES) or text:
+            redraw = kind == "DIMENSION" and not _is_translation(self.matrix)
+            if (self.upright and kind in ocs.OCS_TYPES) or text or redraw:
                 before = snapshot_entity(e)
                 self._before.append((e, before))
             attribs = ([(a, a.copy()) for a in e.attribs]
@@ -933,6 +960,8 @@ class TransformCommand(Command):
             if self.upright and kind in ocs.OCS_TYPES:
                 ocs.upright(e)
             _keep_hatch_direction(e, hatch)
+            if redraw:
+                redraw_transformed_dimension(document, e)
             if text:
                 mirrtext.make_readable(e, before, self.matrix)
             for attrib, snapshot in attribs:
@@ -1034,12 +1063,16 @@ class CopyEntitiesCommand(Command):
             if self.upright and clone.dxftype() in ocs.OCS_TYPES:
                 ocs.upright(clone)
             _keep_hatch_direction(clone, hatch)
+            redraw = clone.dxftype() == "DIMENSION" \
+                and not _is_translation(self.matrix)
             if readable:
                 mirrtext.make_readable(clone, e, self.matrix)
                 if clone.dxftype() == "INSERT":
                     for attrib, source in zip(clone.attribs, e.attribs):
                         mirrtext.make_readable(attrib, source, self.matrix)
             msp.add_entity(clone)
+            if redraw:
+                redraw_transformed_dimension(document, clone)
             self.copies.append(clone)
         document.dirty = True
 

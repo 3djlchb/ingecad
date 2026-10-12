@@ -273,3 +273,62 @@ def test_an_arc_length_has_no_text_prefix():
                               end_angle=90, distance=1,
                               dimstyle="Arco").render().dimension
     assert _texts(document.doc, dim) == ["7.85"]
+
+
+def _readable(document, dim):
+    """(text, height, rotation in degrees) of a dimension's text."""
+    import math
+
+    out = []
+    for e in document.doc.blocks.get(dim.dxf.geometry):
+        if e.dxftype() == "MTEXT":
+            d = e.dxf.get("text_direction", None)
+            angle = math.degrees(math.atan2(d.y, d.x)) if d is not None \
+                else float(e.dxf.get("rotation", 0.0))
+            out.append((e.plain_text(), round(e.dxf.char_height, 9),
+                        round(angle, 6)))
+    return out
+
+
+def test_rotate_scale_and_mirror_redraw_a_dimension_as_autocad_does():
+    """Found redrawing a YouTuber's staircase: ROTATE 90 left the text
+    upside down, SCALE 2 kept 0.28 on a 0.56 run at twice the height, and
+    MIRROR drew the copies on top of the originals."""
+    from ezdxf import bbox
+
+    document = Document.new()
+    msp = document.modelspace()
+    document.doc.dimstyles.new("P", dxfattribs={
+        "dimdec": 2, "dimzin": 0, "dimdsep": ord("."), "dimtxt": 0.04,
+        "dimasz": 0.03})
+    dim = msp.add_linear_dim(base=(0, 0.3), p1=(0, 0), p2=(0.28, 0),
+                             dimstyle="P").render().dimension
+    history = History(document)
+    history.execute(actions_rotate([dim], 90))
+    text, height, angle = _readable(document, dim)[0]
+    assert text == "0.28" and height == 0.04
+    assert -90.0 < angle <= 90.0, "the text reads upside down"
+    history.undo()
+    assert dim.dxf.defpoint3.x == 0.28            # the author's, exactly
+    history.execute(actions_scale([dim], 2))
+    assert _readable(document, dim)[0][:2] == ("0.56", 0.04)
+    history.undo()
+    from core import actions
+
+    history.execute(actions.mirror_entities([dim], (-1, 0), (-1, 1),
+                                            keep_source=True))
+    copy = list(msp.query("DIMENSION"))[-1]
+    assert bbox.extents([copy]).center.x < -1.0
+    assert _readable(document, copy)[0][0] == "0.28"
+
+
+def actions_rotate(entities, angle):
+    from core import actions
+
+    return actions.rotate_entities(entities, (0, 0), angle)
+
+
+def actions_scale(entities, factor):
+    from core import actions
+
+    return actions.scale_entities(entities, (0, 0), factor)
