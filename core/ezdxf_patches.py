@@ -821,6 +821,45 @@ def _patch_metric_compatible_fonts() -> None:
 
     _fonts.TrueTypeFont.create_cache = create_cache
 
+    # The glyphs of a twin standing in are scaled by METRIC_COMPATIBLE_SCALE
+    # (Arial's widths), so its capitals stand that much lower than the text
+    # height; text_size kept reporting the full height. Anything placing
+    # text by its measured box -- MIRROR's readable text, a justification
+    # change -- then put it 0.1-0.2 units off on a Linux without Arial (the
+    # release CI; most users). The cap height follows the glyphs now.
+    from ezdxf.tools import text_size as _text_size
+
+    original_size = _text_size.text_size
+    if not getattr(original_size, "_ingecad_patch", False):
+        def text_size(text):
+            size = original_size(text)
+            factor = _twin_factor(text)
+            if factor == 1.0:
+                return size
+            # total_height comes from the font's measurements, already
+            # scaled; cap_height is the text's height, by definition
+            return _text_size.TextSize(size.width, size.cap_height * factor,
+                                       size.total_height)
+
+        text_size._ingecad_patch = True
+        _text_size.text_size = text_size
+
+
+def _twin_factor(text) -> float:
+    """METRIC_COMPATIBLE_SCALE of a TEXT's font when its twin stands in."""
+    from ezdxf.fonts import fonts as _fonts
+
+    try:
+        doc = text.doc
+        style = doc.styles.get(text.dxf.get("style", "Standard"))
+        name = str(style.dxf.get("font", "") or "").lower()
+    except Exception:  # noqa: BLE001 -- no style: nothing to scale
+        return 1.0
+    factor = METRIC_COMPATIBLE_SCALE.get(name)
+    if factor and is_twin_standing_in(_fonts.font_manager, name):
+        return factor
+    return 1.0
+
 
 #: One accessor per format code, so any format keeps ``format_point``'s exact
 #: semantics: components come out in the order the string lists them, unknown

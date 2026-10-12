@@ -69,7 +69,10 @@ def _measure(text) -> tuple[float, float, float, float]:
     from ezdxf.tools.text_size import text_size
 
     size = text_size(text)
-    metrics = fonts.make_font(get_font_name(text), size.cap_height,
+    # the font from the text's own height: make_font applies a stand-in
+    # font's scale itself, and size.cap_height already carries it
+    metrics = fonts.make_font(get_font_name(text),
+                              text.dxf.get_default("height"),
                               text.dxf.get_default("width")).measurements
     return size.width, size.cap_height, metrics.descender_height, metrics.x_height
 

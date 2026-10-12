@@ -100,6 +100,10 @@ def test_coming_back_keeps_the_view_and_does_not_regen(qapp, win, tmp_path):
     assert scene is not None
     _open(qapp, win, _drawing(tmp_path, "dos.dxf"))
     assert win.viewport._scene is not scene
+    # a window shortcut needs the window active: under the CI's Xvfb, with
+    # no window manager, it may not be until asked
+    win.activateWindow()
+    QTest.qWaitForWindowActive(win, 2000)
     QTest.keySequence(win, QKeySequence("Ctrl+Tab"))
     qapp.processEvents()
     assert win.document.name == "uno.dxf", "Ctrl+Tab did not switch"
