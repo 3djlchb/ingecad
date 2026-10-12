@@ -126,6 +126,18 @@ DEFAULT_ALIASES: dict[str, str] = {
     "AR": "ARRAY",
     "-AR": "ARRAY",
     "-ARRAY": "ARRAY",       # the command-line ARRAY is what ours is
+    # AutoCAD's own aliases: unknown, these fell to prefix completion and
+    # ran something else -- R ran RAY, CH ran CHAMFER, PR a survey command
+    "DDEDIT": "TEXTEDIT",
+    "ED": "TEXTEDIT",
+    "PR": "PROPERTIES",
+    "CH": "PROPERTIES",
+    "PROPS": "PROPERTIES",
+    "MO": "PROPERTIES",
+    "R": "REDRAW",
+    "RA": "REDRAWALL",
+    "LW": "LWEIGHT",
+    "DTEXT": "TEXT",
     "PE": "PEDIT",
     "LEN": "LENGTHEN",
     "AL": "ALIGN",

@@ -1587,15 +1587,30 @@ class AddDimensionCommand(Command):
         # AFTER the layer lands: the stamp dresses the block in the
         # dimension's layer.
         _stamp_dim_block_byblock(document, self.dim)
-        if self.associate:
-            from core import dimassoc
+        from core import dimassoc
 
-            if dimassoc.dimassoc_mode(document) == 2:
-                dimassoc.attach(document, self.dim, self.associate)
+        if self.associate and dimassoc.dimassoc_mode(document) == 2:
+            dimassoc.attach(document, self.dim, self.associate)
+        self._pieces = []
+        if dimassoc.dimassoc_mode(document) == 0:
+            # DIMASSOC 0: "no association between the various elements of
+            # the dimension" -- lines, arrowheads and text, each on its own
+            space = self.space(document)
+            for piece in self.dim.virtual_entities():
+                space.add_entity(piece)
+                self._pieces.append(piece)
+            space.delete_entity(self.dim)
+            if self._block_name and self._block_name in document.doc.blocks:
+                document.doc.blocks.delete_block(self._block_name, safe=False)
+            self.dim = None
         document.dirty = True
 
     def undo(self, document) -> None:
         msp = self.space(document)
+        for piece in getattr(self, "_pieces", []):
+            if piece.is_alive:
+                msp.delete_entity(piece)
+        self._pieces = []
         block = self._block_name
         if self.dim is not None and self.dim.is_alive:
             from core import dimassoc

@@ -80,6 +80,27 @@ CURSORSIZE_DEFAULT = 100
 SETTING_CROSSHAIR_COLOR = "display/crosshair_color"
 
 
+#: ZOOMFACTOR (p. 2741): how much one wheel notch zooms, 3-100, AutoCAD's
+#: 60 the 1.2 per notch IngeCAD always used. The YouTuber's first check of
+#: a CAD: the wheel's speed, which could not be changed.
+SETTING_ZOOMFACTOR = "view/zoomfactor"
+
+
+def zoomfactor() -> int:
+    from PySide6.QtCore import QSettings
+
+    try:
+        value = int(QSettings().value(SETTING_ZOOMFACTOR, 60))
+    except (TypeError, ValueError):
+        return 60
+    return min(max(value, 3), 100)
+
+
+def wheel_step() -> float:
+    """The zoom ratio of one wheel notch at the current ZOOMFACTOR."""
+    return 1.0 + 0.2 * zoomfactor() / 60.0
+
+
 def cursorsize() -> int:
     return int_pref(SETTING_CURSORSIZE, CURSORSIZE_DEFAULT, 1, 100)
 
@@ -2353,9 +2374,9 @@ class Viewport(QOpenGLWidget):
                 # anchored at the cursor, exactly like the paper wheel —
                 # unless the display is locked, then the paper zooms.
                 wx, wy = self.view.screen_to_world(pos.x(), pos.y())
-                if window.vp_view_zoom(1.2 ** notches, (wx, wy)):
+                if window.vp_view_zoom(wheel_step() ** notches, (wx, wy)):
                     return
-            self.view.zoom_at(pos.x(), pos.y(), 1.2 ** notches)
+            self.view.zoom_at(pos.x(), pos.y(), wheel_step() ** notches)
             self.update()
 
     def leaveEvent(self, event) -> None:

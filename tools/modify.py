@@ -1520,7 +1520,30 @@ class HatchEditTool(Tool):
         self._edit(entity)
 
 
+class TextEditTool(Tool):
+    """TEXTEDIT (DDEDIT, ED): pick an annotation and edit it in place, one
+    after another until Enter -- the editor a double-click opens. It was an
+    unknown command."""
+
+    entity_picker = True
+
+    def start(self) -> None:
+        self.name = "TEXTEDIT"
+        self.prompt("Select an annotation object:")
+
+    def on_point(self, point: Point) -> None:
+        services = self.ctx.services
+        entity = services.pick_entity(point) if services else None
+        opener = getattr(services, "open_text_editor_for", None)
+        if entity is None or opener is None or not opener(entity):
+            self.ctx.echo(tr("That is not an annotation object."))
+            self.prompt("Select an annotation object:")
+            return
+        self.ctx.finish()
+
+
 MODIFY_TOOL_CLASSES = {
+    "TEXTEDIT": TextEditTool,
     "HATCHEDIT": HatchEditTool,
     "STRETCH": StretchTool,
     "BREAK": BreakTool,

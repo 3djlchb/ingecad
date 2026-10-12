@@ -1446,7 +1446,9 @@ class ToolController(QObject):
             # renders through the same frontend the base scene uses -- 1035
             # vertices for a plain DIMLINEAR, measured. Nothing about it needs
             # a full regen.
-            return [command.dim] if command.dim is not None else []
+            # DIMASSOC 0 leaves loose pieces instead of the dimension
+            return ([command.dim] if command.dim is not None else []) \
+                + list(getattr(command, "_pieces", None) or [])
         if isinstance(command, (actions.PasteCommand,
                                 actions.CopyEntitiesCommand)):
             return list(command.copies)
@@ -1873,6 +1875,7 @@ class ToolController(QObject):
             touched.append(command.entity)
         if getattr(command, "dim", None) is not None:
             touched.append(command.dim)   # AddDimensionCommand, one entity
+        touched.extend(getattr(command, "_pieces", None) or [])  # DIMASSOC 0
         for _orig, parts in (getattr(command, "pieces", None) or []):
             touched.extend(parts)
         if len(touched) > BIG_EDIT:

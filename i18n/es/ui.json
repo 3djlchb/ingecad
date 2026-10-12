@@ -2062,5 +2062,11 @@
   "mm =": "mm =",
   "Preview...": "Vista preliminar...",
   "Requires a positive integer.": "Se requiere un entero positivo.",
-  "Requires a nonzero value.": "Se requiere un valor distinto de cero."
+  "Requires a nonzero value.": "Se requiere un valor distinto de cero.",
+  "Current lineweight for new objects: {w}": "Grosor de línea actual para objetos nuevos: {w}",
+  "Enter default lineweight for new objects or [ByLayer/ByBlock/Default] <{w}>:": "Indique el grosor de línea por defecto para objetos nuevos o [porCapa(BL)/porBloque(BB)/Defecto(D)] <{w}>:",
+  "Unknown variable name.": "Nombre de variable desconocido.",
+  "Enter variable name:": "Indique el nombre de la variable:",
+  "Select an annotation object:": "Designe un objeto de anotación:",
+  "That is not an annotation object.": "No es un objeto de anotación."
 }

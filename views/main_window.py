@@ -272,6 +272,11 @@ class _LayoutTabHost(QWidget):
         return hint
 
 
+def _lineweight_name(value: int) -> str:
+    return {-1: "ByLayer", -2: "ByBlock", -3: "Default"}.get(
+        int(value), f"{int(value) / 100:.2f} mm")
+
+
 class MainWindow(DocumentTabsMixin, QMainWindow):
     # A live viewport regen must fit a frame-ish budget or pan blocks the UI.
     _VP_LIVE_BUDGET_MS = 33.0
@@ -819,6 +824,130 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         QSettings().setValue(key, value)
         self.viewport.refresh_cursor_prefs()
         self.command_line.echo(tr("{name} = {value}", name=name, value=value))
+
+    #: name: (kind, low, high) of the variables _cmd_sysvar answers
+    _SYSVARS = {"DIMASSOC": (int, 0, 2), "CELTSCALE": (float, 1e-9, None),
+                "DIMSCALE": (float, 0.0, None), "LWDISPLAY": (int, 0, 1),
+                "ZOOMFACTOR": (int, 3, 100)}
+
+    def _sysvar_value(self, name: str):
+        from views import viewport as vp_prefs
+
+        header = self.document.doc.header if self.document is not None else {}
+        if name == "LWDISPLAY":
+            return int(self.viewport.lwt_on)
+        if name == "ZOOMFACTOR":
+            return vp_prefs.zoomfactor()
+        if name == "DIMSCALE":
+            from core import styles as style_ops
+
+            return style_ops.dim_style_attribs(
+                self.document, header.get("$DIMSTYLE", "Standard")
+            ).get("dimscale", 1.0) if self.document is not None else 1.0
+        default = {"DIMASSOC": 2, "CELTSCALE": 1.0}[name]
+        return header.get("$" + name, default)
+
+    def _cmd_sysvar(self, name: str, *args) -> Prompt | None:
+        """DIMASSOC, CELTSCALE, DIMSCALE, LWDISPLAY and ZOOMFACTOR typed:
+        "Enter new value for NAME <current>:" as AutoCAD asks."""
+        kind, low, high = self._SYSVARS[name]
+        current = self._sysvar_value(name)
+        text = str(args[0]).strip() if args and str(args[0]).strip() else ""
+        if not text:
+            return Prompt(tr("Enter new value for {name} <{value}>:",
+                             name=name, value=f"{current:g}"),
+                          lambda value: self._cmd_sysvar(name, value)
+                          if str(value).strip() else None)
+        try:
+            value = kind(float(text.replace(",", ".")))
+        except ValueError:
+            self.command_line.echo(tr("Requires a numeric value."))
+            return None
+        if (low is not None and value < low) or (high is not None and value > high):
+            self.command_line.echo(tr("Value must be between {min} and {max}.",
+                                      min=low, max=high if high is not None else "∞"))
+            return None
+        if name == "LWDISPLAY":
+            if bool(value) != self.viewport.lwt_on:
+                self._toggle_mode("lwt")
+        elif name == "ZOOMFACTOR":
+            from views import viewport as vp_prefs
+
+            QSettings().setValue(vp_prefs.SETTING_ZOOMFACTOR, value)
+        elif name == "DIMSCALE":
+            # the renderer reads DIMSCALE from the current style
+            from core import styles as style_ops
+
+            style = self.document.doc.header.get("$DIMSTYLE", "Standard")
+            self.history.execute(
+                style_ops.SetDimStylePropsCommand(style, {"dimscale": value}))
+            self.after_style_change()
+        elif self.document is not None:
+            from core.attributes import SetHeaderCommand
+
+            command = SetHeaderCommand("$" + name, value, name)
+            command.needs_regen = False       # new objects only
+            self.history.execute(command)
+        self.command_line.echo(tr("{name} = {value}", name=name,
+                                  value=f"{value:g}"))
+        return None
+
+    def _cmd_lweight(self, *args) -> Prompt | None:
+        """-LWEIGHT: the lineweight new objects get ($CELWEIGHT)."""
+        from core.attributes import SetHeaderCommand
+
+        def answer(text: str):
+            key = text.strip().upper()
+            if not key:
+                return None
+            named = {"BYLAYER": -1, "BL": -1, "BYBLOCK": -2, "BB": -2,
+                     "DEFAULT": -3, "D": -3}
+            if key in named:
+                value = named[key]
+            else:
+                try:
+                    mm = float(key.replace(",", "."))
+                except ValueError:
+                    self.command_line.echo(tr("Invalid lineweight."))
+                    return ask()
+                from ezdxf.lldxf import const
+
+                value = min(const.VALID_DXF_LINEWEIGHTS,
+                            key=lambda w: abs(w - mm * 100))
+            if self.document is not None:
+                command = SetHeaderCommand("$CELWEIGHT", value, "LWEIGHT")
+                command.needs_regen = False
+                self.history.execute(command)
+            self.command_line.echo(tr("Current lineweight for new objects: {w}",
+                                      w=_lineweight_name(value)))
+            return None
+
+        def ask():
+            current = int(self.document.doc.header.get("$CELWEIGHT", -1)) \
+                if self.document is not None else -1
+            return Prompt(tr("Enter default lineweight for new objects or "
+                             "[ByLayer/ByBlock/Default] <{w}>:",
+                             w=_lineweight_name(current)), answer)
+
+        if args and str(args[0]).strip():
+            return answer(str(args[0]))
+        return ask()
+
+    def _cmd_setvar(self, *args) -> Prompt | None:
+        """SETVAR: a variable by name, then its own prompt."""
+        def answer(text: str):
+            name = text.strip().upper()
+            if not name:
+                return None
+            entry = self.dispatcher._commands.get(name)
+            if entry is None:
+                self.command_line.echo(tr("Unknown variable name."))
+                return None
+            return entry.handler()
+
+        if args and str(args[0]).strip():
+            return answer(str(args[0]))
+        return Prompt(tr("Enter variable name:"), answer)
 
     def _cmd_drafting_var(self, name: str, *args) -> Prompt | None:
         """The Drafting Settings variables, typed: POLARANG (degrees),
@@ -3943,6 +4072,16 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
                     "CENTERCROSSGAP", "CENTERLAYER", "CENTERMARKEXE"):
             d.register(var, lambda *a, v=var: self._cmd_center_var(v, *a))
         d.register("PLUGINS", self._cmd_plugins)
+        # Commands an AutoCAD user types and found unknown (a YouTuber's
+        # drawing session): the sysvars, PROPERTIES and REDRAW
+        for var in ("DIMASSOC", "CELTSCALE", "DIMSCALE", "LWDISPLAY",
+                    "ZOOMFACTOR"):
+            d.register(var, lambda *a, v=var: self._cmd_sysvar(v, *a))
+        d.register("LWEIGHT", self._cmd_lweight)
+        d.register("SETVAR", self._cmd_setvar)
+        d.register("PROPERTIES", lambda *a: self.toggle_properties_panel())
+        d.register("REDRAW", lambda *a: self.viewport.update())
+        d.register("REDRAWALL", lambda *a: self.viewport.update())
         d.register("HELP", self._cmd_help)
         d.register("BEDIT", self._cmd_bedit)
         d.register("-BEDIT", self._cmd_bedit)

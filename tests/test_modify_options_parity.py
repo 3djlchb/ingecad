@@ -197,3 +197,40 @@ def test_array_asks_only_the_spacing_it_needs(win):
     xs = sorted(round(c.dxf.center.x, 9)
                 for c in win.document.modelspace().query("CIRCLE"))
     assert xs == [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+
+def test_autocad_aliases_and_variables_an_autocad_user_types(win):
+    """Typed in a YouTuber's session and unknown: DIMASSOC, CELTSCALE,
+    LWEIGHT, SETVAR...; and R, CH, PR fell to prefix completion and ran
+    RAY, CHAMFER and a survey command."""
+    from core.aliases import load_aliases
+    from views import viewport as vp
+
+    aliases = load_aliases()
+    assert aliases["R"] == "REDRAW" and aliases["CH"] == "PROPERTIES"
+    assert aliases["PR"] == "PROPERTIES" and aliases["ED"] == "TEXTEDIT"
+    for text in ("R", "CH", "PR"):
+        _type(win, text)
+        assert win.tools.tool is None, f"{text} started a tool"
+    header = win.document.doc.header
+    _type(win, "CELTSCALE", "0.0035")
+    assert header["$CELTSCALE"] == 0.0035
+    _type(win, "LWEIGHT", "0.6")
+    assert header["$CELWEIGHT"] == 60
+    _type(win, "SETVAR", "DIMASSOC", "1")
+    assert header["$DIMASSOC"] == 1
+    _type(win, "ZOOMFACTOR", "30")
+    assert vp.wheel_step() == pytest.approx(1.1)
+    _type(win, "ZOOMFACTOR", "60")
+
+
+def test_dimassoc_0_draws_a_dimension_as_loose_pieces(win):
+    _type(win, "DIMASSOC", "0")
+    _type(win, "DIMLINEAR", "0,0", "10,0", "5,-5")
+    msp = win.document.modelspace()
+    assert not list(msp.query("DIMENSION"))
+    kinds = {e.dxftype() for e in msp}
+    assert "LINE" in kinds and ({"MTEXT", "TEXT"} & kinds)
+    _type(win, "U")
+    assert not list(msp)
+    _type(win, "DIMASSOC", "2")
