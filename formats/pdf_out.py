@@ -127,10 +127,14 @@ def build_graphics_scene(document, layout_name: str | None = None,
     # relative to the view, which ezdxf alone draws 1 unit wide)
     from ezdxf.addons.drawing.config import Configuration
 
-    from render.backend import point_size
+    from render.backend import _flatten_distance, min_dash_length, point_size
 
     size = point_size(document)
-    config = Configuration() if size is None else Configuration(pdsize=size)
+    # the paper shows what the screen cannot: a tenth of its tolerance
+    config = Configuration(min_dash_length=min_dash_length(
+        _flatten_distance(layout) * 0.1, document))
+    if size is not None:
+        config = config.with_changes(pdsize=size)
     TolerantFrontend(context, backend, config).draw_layout(
         layout, finalize=False, layout_properties=sheet)
     if getattr(layout, "is_any_paperspace", False):

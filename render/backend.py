@@ -1189,11 +1189,30 @@ def point_size(document) -> Optional[float]:
     return height * percent / 100.0
 
 
+def min_dash_length(tolerance: float, document=None) -> float:
+    """ezdxf's shortest dash, in its own terms (it multiplies by $LTSCALE).
+
+    ezdxf stretches every dash, gap and dot to 0.1 drawing units: in a
+    drawing in metres that is 10 cm, so HIDDEN and DASHDOT at the small
+    linetype scale such a drawing needs came out identical and dotless, on
+    screen and in the PDF (a YouTuber's staircase plan, drawn in metres).
+    The floor follows the drawing's own tolerance instead -- never coarser
+    than ezdxf's 0.1, so a big plan in millimetres draws as before."""
+    ltscale = 1.0
+    if document is not None:
+        try:
+            ltscale = float(document.doc.header.get("$LTSCALE", 1.0)) or 1.0
+        except Exception:  # noqa: BLE001 -- a broken header: plain 1
+            ltscale = 1.0
+    return min(max(tolerance, 1e-9) / abs(ltscale), 0.1)
+
+
 def frontend_config(flatten: float, document=None) -> Configuration:
     config = Configuration(
         max_flattening_distance=flatten,
         min_hatch_line_distance=flatten * HATCH_DENSITY_REL,
         hatching_timeout=HATCHING_TIMEOUT,
+        min_dash_length=min_dash_length(flatten, document),
     )
     size = point_size(document)
     return config if size is None else config.with_changes(pdsize=size)
