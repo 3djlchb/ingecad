@@ -4,9 +4,8 @@
 
 The colleague's drawing, edited as its author would: every dimension of a
 1576-plan corpus redrawn in place and compared with what the author's CAD
-drew, a YouTuber's whole staircase plan (drawn in Open CAD Studio, on
-camera) drawn again in IngeCAD, and what testers and GeoCad Yaguareté's
-author ran into. Plus drawing tabs and associative dimensions.
+drew, a whole staircase plan drawn again from scratch, and what testers
+ran into. Plus drawing tabs and associative dimensions.
 
 ### Several drawings, one window
 - **Drawing tabs** (#71): several drawings open in one window, each with
@@ -68,8 +67,8 @@ author ran into. Plus drawing tabs and associative dimensions.
 ### Smaller
 - Object snaps reach inside block inserts; ZOOM Window with snaps (#80);
   BOUNDARY keeps curves (#83); Intersection finds crossing curves (#82);
-  the Properties panel takes a decimal comma; four behaviours GeoCad
-  Yaguareté had to patch; the rest of Rafael's sixth and seventh reviews.
+  the Properties panel takes a decimal comma; the rest of what testers
+  reported.
 
 ## v0.6.6 — 2026-10-09
 
