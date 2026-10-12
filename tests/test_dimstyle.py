@@ -172,6 +172,9 @@ def test_manager_modify_executes_command(qapp, monkeypatch):
                 props["dimtxt"] = 4.0
                 return {"dimtxt": 4.0}
 
+            def changed_props(self):
+                return {"dimtxt": 4.0}       # the one field the user edited
+
         monkeypatch.setattr(mod, "DimStyleEditorDialog", FakeEditor)
         # The seeded height depends on the drawing's template (a metres
         # drawing carries 0.0025, a millimetre one 2.5), so undo is checked

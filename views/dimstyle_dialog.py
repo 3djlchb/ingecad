@@ -263,8 +263,20 @@ class PrecisionCombo(QComboBox):
 _ANG_KIND = {0: "deg", 1: "dms", 2: "grad", 3: "rad"}
 
 
-def _dspin(value, lo=0.0, hi=1e6, dec=3, step=0.1) -> QDoubleSpinBox:
-    s = QDoubleSpinBox()
+class _TrimmedSpin(QDoubleSpinBox):
+    """Six decimals -- a drawing in metres needs 0.0025 -- shown without
+    trailing zeros, so a millimetre style still reads 2.5, not 2.500000."""
+
+    def textFromValue(self, value: float) -> str:
+        text = self.locale().toString(float(value), "f", self.decimals())
+        point = self.locale().decimalPoint()
+        if point in text:
+            text = text.rstrip("0").rstrip(point)
+        return text
+
+
+def _dspin(value, lo=0.0, hi=1e6, dec=6, step=0.1) -> QDoubleSpinBox:
+    s = _TrimmedSpin()
     s.setRange(lo, hi)
     s.setDecimals(dec)
     s.setSingleStep(step)
@@ -453,7 +465,7 @@ class DimStyleEditorDialog(QDialog):
         f.addRow(tr("Text style"), self.dimtxsty)
         self.dimclrt = _combo(_ACI, a("dimclrt", 0))
         f.addRow(tr("Text color"), self.dimclrt)
-        self.dimtxt = _dspin(a("dimtxt", 2.5), lo=0.01)
+        self.dimtxt = _dspin(a("dimtxt", 2.5), lo=1e-6)   # 0.0025 m text
         f.addRow(tr("Text height"), self.dimtxt)
         gap = float(a("dimgap", 0.625))
         self.frame_text = QCheckBox(tr("Draw frame around text"))
@@ -619,6 +631,17 @@ class DimStyleEditorDialog(QDialog):
                     except Exception:
                         pass
         self._render_preview()
+        #: What the widgets showed on opening: OK writes only what the user
+        #: changed. Writing everything rounded each value to the field's
+        #: decimals and wrote defaults the style never had -- opening ISO-25
+        #: and pressing OK turned 0.0025 m text into 0.01 (four times
+        #: taller) and gave it a 3.75 m baseline spacing.
+        self._initial = self.result_props()
+
+    def changed_props(self) -> dict:
+        """The DIMVARS the user actually changed in this dialog."""
+        props = self.result_props()
+        return {k: v for k, v in props.items() if self._initial.get(k) != v}
 
     def _render_preview(self) -> None:
         self.preview.setPixmap(render_dim_preview(
@@ -881,7 +904,7 @@ class DimStyleManagerDialog(QDialog):
             style_ops.fixed_text_heights(self.document))
         if not editor.exec():
             return
-        attribs.update(editor.result_props())
+        attribs.update(editor.changed_props())
         self.window.history.execute(
             style_ops.NewDimStyleCommand(name, attribs))
         self.window.after_style_change()
@@ -898,8 +921,7 @@ class DimStyleManagerDialog(QDialog):
             style_ops.fixed_text_heights(self.document))
         if not editor.exec():
             return
-        props = editor.result_props()
-        changed = {k: v for k, v in props.items() if attribs.get(k) != v}
+        changed = editor.changed_props()
         if changed:
             self.window.history.execute(
                 style_ops.SetDimStylePropsCommand(name, changed))
