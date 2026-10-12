@@ -164,13 +164,19 @@ _PT_TO_MM = 25.4 / 72.0
 _MIN_PLOT_MM = 0.1
 
 
-def _use_physical_pens(scene) -> None:
+def _use_physical_pens(scene, mm_per_unit: float = 1.0,
+                       lineweights: bool = True) -> None:
     """Convert the backend's cosmetic pens (points, fixed device pixels —
     a screen convention) into physical widths in scene units.
 
-    Only valid when the scene units are paper mm (a layout plot): the
-    0.25 mm default lineweight arrives as a 0.708 pt cosmetic pen, which a
-    1200 dpi printer would render as an invisible 0.015 mm hairline.
+    ``mm_per_unit`` is how many paper mm one scene unit becomes: 1 on a
+    layout, the plot scale in model space -- where the pens were left
+    cosmetic, so a plan plotted from the Model tab came out all in 1 px
+    hairlines whatever its layers' lineweights (a YouTuber's staircase at
+    1:25). The 0.25 mm default lineweight arrives as a 0.708 pt cosmetic
+    pen, which a 1200 dpi printer would render as an invisible 0.015 mm
+    hairline. ``lineweights`` off is AutoCAD's "Plot object lineweights"
+    cleared: every line at the thinnest pen.
     """
     from PySide6.QtCore import Qt
 
@@ -181,15 +187,17 @@ def _use_physical_pens(scene) -> None:
         if pen.style() == Qt.NoPen:
             continue
         pen.setCosmetic(False)
-        pen.setWidthF(max(pen.widthF() * _PT_TO_MM, _MIN_PLOT_MM))
+        width_mm = max(pen.widthF() * _PT_TO_MM, _MIN_PLOT_MM) \
+            if lineweights else _MIN_PLOT_MM
+        pen.setWidthF(width_mm / mm_per_unit)
         item.setPen(pen)
 
 
 def plot(document, printer, layout_name: str | None = None,
          area: tuple[float, float, float, float] | None = None,
          mm_per_unit: float | None = None,
-         physical_pens: bool = False, ctb: str | None = None,
-         painter: QPainter | None = None) -> None:
+         physical_pens: bool = True, ctb: str | None = None,
+         painter: QPainter | None = None, lineweights: bool = True) -> None:
     """Render onto ``printer`` (PDF file or a physical printer).
 
     ``area`` is the world rect (x0, y0, x1, y1) to plot; None plots the
@@ -200,8 +208,6 @@ def plot(document, printer, layout_name: str | None = None,
     its own.
     """
     scene = build_graphics_scene(document, layout_name, ctb)
-    if physical_pens:
-        _use_physical_pens(scene)
     if area is None:
         r = scene_extents(scene)
         area = (r.left(), r.top(), r.right(), r.bottom())
@@ -219,6 +225,9 @@ def plot(document, printer, layout_name: str | None = None,
             px_per_unit = min(page.width() / aw, page.height() / ah)
         else:
             px_per_unit = mm_per_unit * px_per_mm
+        if physical_pens:
+            # pens in paper mm, at the scale this plot has
+            _use_physical_pens(scene, px_per_unit / px_per_mm, lineweights)
         tw, th = aw * px_per_unit, ah * px_per_unit
         tx = page.x() + (page.width() - tw) / 2.0
         ty = page.y() + (page.height() - th) / 2.0

@@ -2058,5 +2058,7 @@
   "Select object to extend or shift-select to trim or [Boundary edges/Fence/Crossing/mOde/Undo]:": "Designe objeto que alargar o pulse Mayús y designe para recortar o [aristas de Borde(B)/borde(F)/Captura(C)/mOdo(O)/desHacer(U)]:",
   "Select object to extend or shift-select to trim or [Fence/Crossing/mOde/Undo]:": "Designe objeto que alargar o pulse Mayús y designe para recortar o [Borde(F)/Captura(C)/mOdo(O)/desHacer(U)]:",
   "Specify first fence point:": "Precise primer punto de borde:",
-  "Specify next fence point or [Undo]:": "Precise punto de borde siguiente o [desHacer(U)]:"
+  "Specify next fence point or [Undo]:": "Precise punto de borde siguiente o [desHacer(U)]:",
+  "mm =": "mm =",
+  "Preview...": "Vista preliminar..."
 }

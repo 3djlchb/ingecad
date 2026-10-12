@@ -18,12 +18,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QPushButton,
+    QWidget,
 )
 
 from core.i18n import tr
@@ -69,6 +73,23 @@ class PrintDialog(QDialog):
         self.scale.addItem(tr("Fit to paper"), None)
         for num, den in unit_info.STANDARD_SCALES:
             self.scale.addItem(unit_info.scale_text(num, den), (num, den))
+        # AutoCAD's custom scale: "1000 mm = 25 units" (PLOT, Plot Scale)
+        self.scale.addItem(tr("Custom"), "custom")
+        self.custom_mm = QDoubleSpinBox(self)
+        self.custom_units = QDoubleSpinBox(self)
+        for spin, value in ((self.custom_mm, 1.0), (self.custom_units, 1.0)):
+            spin.setDecimals(6)
+            spin.setRange(1e-6, 1e9)
+            spin.setValue(value)
+            spin.valueChanged.connect(self._show_meaning)
+        custom = QWidget(self)
+        row = QHBoxLayout(custom)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self.custom_mm)
+        row.addWidget(QLabel(tr("mm ="), self))
+        row.addWidget(self.custom_units)
+        row.addWidget(QLabel(tr("units"), self))
+        self._custom_row = custom
         # What one drawing unit is, in mm: the drawing's own $INSUNITS
         # picks it (#68: a millimetre plan opened on Meters, so 1:100
         # plotted a thousand times too small); unitless stays on Meters,
@@ -117,11 +138,21 @@ class PrintDialog(QDialog):
         form.addRow(tr("Plot area"), self.area)
         form.addRow("", self.pick_btn)
         form.addRow(tr("Plot scale"), self.scale)
+        form.addRow("", self._custom_row)
         form.addRow(tr("Drawing unit"), self.units)
         form.addRow("", self.meaning)
         form.addRow(tr("Plot style table"), self.style)
+        # "Plot object lineweights", on by default as in AutoCAD
+        self.lineweights = QCheckBox(tr("Plot object lineweights"), self)
+        self.lineweights.setChecked(True)
+        form.addRow("", self.lineweights)
+        self.scale.currentIndexChanged.connect(self._on_scale_changed)
 
         buttons = QDialogButtonBox(self)
+        preview_btn = QPushButton(tr("Preview..."), self)
+        preview_btn.clicked.connect(self._preview)
+        buttons.addButton(preview_btn, QDialogButtonBox.ActionRole)
+        self._preview_btn = preview_btn
         pdf_btn = QPushButton(tr("Save PDF..."), self)
         printer_btn = QPushButton(tr("Print..."), self)
         buttons.addButton(pdf_btn, QDialogButtonBox.AcceptRole)
@@ -137,6 +168,11 @@ class PrintDialog(QDialog):
         elif not is_layout_tab and window.document is not None:
             self._from_page_setup(window.document.doc.modelspace())
         self._on_area_changed()
+        self._on_scale_changed()
+        self._show_meaning()
+
+    def _on_scale_changed(self) -> None:
+        self._custom_row.setVisible(self.scale.currentData() == "custom")
         self._show_meaning()
 
     def _show_meaning(self) -> None:
@@ -156,6 +192,8 @@ class PrintDialog(QDialog):
                 "scale": self.scale.currentIndex(),
                 "units": self.units.currentIndex(),
                 "style": self.style.currentIndex(),
+                "custom": (self.custom_mm.value(), self.custom_units.value()),
+                "lineweights": self.lineweights.isChecked(),
                 "window": self._window_rect}
 
     def _restore(self, state: dict) -> None:
@@ -164,6 +202,11 @@ class PrintDialog(QDialog):
                            (self.style, "style")):
             if state.get(key) is not None and 0 <= state[key] < combo.count():
                 combo.setCurrentIndex(state[key])
+        if state.get("custom"):
+            self.custom_mm.setValue(state["custom"][0])
+            self.custom_units.setValue(state["custom"][1])
+        if state.get("lineweights") is not None:
+            self.lineweights.setChecked(bool(state["lineweights"]))
         self._window_rect = state.get("window")
         idx = self.area.findData(state.get("area"))
         if idx >= 0:
@@ -228,12 +271,17 @@ class PrintDialog(QDialog):
         ready = not window_area or self._window_rect is not None
         self._pdf_btn.setEnabled(ready)
         self._printer_btn.setEnabled(ready)
+        self._preview_btn.setEnabled(ready)
 
     def _mm_per_unit(self):
         """Paper mm per drawing unit; None to fit the page."""
         ratio = self.scale.currentData()
         if ratio is None:
             return None                         # fit
+        if ratio == "custom":
+            # paper mm per drawing unit, as typed: 1000 mm = 25 units is
+            # 1:25 on a drawing in metres, whatever the unit list says
+            return self.custom_mm.value() / self.custom_units.value()
         num, den = ratio
         return self.units.currentData() * num / den
 
@@ -256,7 +304,33 @@ class PrintDialog(QDialog):
             self.window.document, printer,
             layout_name=getattr(self.window, "_active_layout", None),
             area=self._area_rect(),
-            mm_per_unit=self._mm_per_unit(), ctb=self._ctb())
+            mm_per_unit=self._mm_per_unit(), ctb=self._ctb(),
+            lineweights=self.lineweights.isChecked())
+
+    def _preview(self) -> None:
+        """Preview: the plot as it will come out, in the system's PDF viewer
+        (a temporary file; nothing is saved next to the drawing)."""
+        import tempfile
+
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        handle, path = tempfile.mkstemp(prefix="ingecad-preview-",
+                                        suffix=".pdf")
+        import os
+
+        os.close(handle)
+        if self._layout_mode():
+            (width, height), _sheet = pdf_out.layout_sheet(
+                self.window.document, self._layout_name)
+            printer = pdf_out.make_pdf_printer_mm(path, width, height)
+        else:
+            printer = pdf_out.make_pdf_printer(
+                path, self.paper.currentText(),
+                landscape=self.orientation.currentData())
+        self._plot_on(printer)
+        self.last_preview = path
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     # -- outputs ---------------------------------------------------------------
     def _to_pdf(self) -> None:
