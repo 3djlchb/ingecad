@@ -125,6 +125,7 @@ DEFAULT_ALIASES: dict[str, str] = {
     "CHA": "CHAMFER",
     "AR": "ARRAY",
     "-AR": "ARRAY",
+    "-ARRAY": "ARRAY",       # the command-line ARRAY is what ours is
     "PE": "PEDIT",
     "LEN": "LENGTHEN",
     "AL": "ALIGN",

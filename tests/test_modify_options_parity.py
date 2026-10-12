@@ -184,3 +184,16 @@ def test_trim_fence_and_undo(win, standard_trim):
     assert _xs(win) == [(0, 10), (0, 20), (0, 20)]
     _type(win, "")
     assert win.tools.tool is None
+
+
+def test_array_asks_only_the_spacing_it_needs(win):
+    """One row: -ARRAY asks no distance between rows. It did, so the video's
+    "1, 6, 0.20" put 0.20 between rows and an Enter stacked five copies
+    on the original; "COU" was taken as one row."""
+    _type(win, "CIRCLE", "0,0", "0.004")
+    _type(win, "-ARRAY", "L", "", "R", "COU")
+    assert "positive integer" in win.command_line.history.toPlainText()
+    _type(win, "1", "6", "", "0.20")
+    xs = sorted(round(c.dxf.center.x, 9)
+                for c in win.document.modelspace().query("CIRCLE"))
+    assert xs == [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]

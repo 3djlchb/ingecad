@@ -2060,5 +2060,7 @@
   "Specify first fence point:": "Precise primer punto de borde:",
   "Specify next fence point or [Undo]:": "Precise punto de borde siguiente o [desHacer(U)]:",
   "mm =": "mm =",
-  "Preview...": "Vista preliminar..."
+  "Preview...": "Vista preliminar...",
+  "Requires a positive integer.": "Se requiere un entero positivo.",
+  "Requires a nonzero value.": "Se requiere un valor distinto de cero."
 }

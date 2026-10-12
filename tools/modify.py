@@ -528,33 +528,79 @@ class ArrayTool(Tool):
         self.ctx.finish()
 
     # -- rectangular
+    def _read_count(self, text: str):
+        """A count typed at a <1> prompt: Enter is 1; anything but a
+        positive whole number is refused, as AutoCAD refuses it (a typed
+        "COU" became one row)."""
+        if not text.strip():
+            return 1
+        value = _number(text)
+        if value is None or value < 1 or int(value) != value:
+            self.ctx.echo(tr("Requires a positive integer."))
+            return None
+        return int(value)
+
     def _take_rows(self, text: str) -> bool:
-        self._rows = int(_number(text) or 1)
+        rows = self._read_count(text)
+        if rows is None:
+            self.prompt("Enter the number of rows (---) <1>:")
+            return True
+        self._rows = rows
         self._await = "cols"
         self.prompt("Enter the number of columns (|||) <1>:")
         return True
 
     def _take_cols(self, text: str) -> bool:
-        self._cols = int(_number(text) or 1)
+        cols = self._read_count(text)
+        if cols is None:
+            self.prompt("Enter the number of columns (|||) <1>:")
+            return True
+        self._cols = cols
         if self._rows <= 1 and self._cols <= 1:
             self.ctx.echo(tr("One row and one column is the object itself."))
             self.ctx.finish()
             return True
-        self._await = "row_spacing"
-        self.prompt("Enter the distance between rows (---):")
+        if self._rows > 1:
+            self._await = "row_spacing"
+            self.prompt("Enter the distance between rows (---):")
+        else:
+            # one row: there is no distance between rows to ask (-ARRAY);
+            # asking it put the column spacing typed next into rows
+            self._await = "col_spacing"
+            self.prompt("Specify the distance between columns (|||):")
         return True
 
+    def _spacing(self, text: str):
+        value = _number(text)
+        if value is None or value == 0:
+            # Enter is no spacing at all: the copies stacked on the original
+            self.ctx.echo(tr("Requires a nonzero value."))
+            return None
+        return value
+
     def _take_row_spacing(self, text: str) -> bool:
-        self._row_spacing = _number(text) or 0.0
+        spacing = self._spacing(text)
+        if spacing is None:
+            self.prompt("Enter the distance between rows (---):")
+            return True
+        self._row_spacing = spacing
+        if self._cols <= 1:
+            return self._place(0.0)
         self._await = "col_spacing"
         self.prompt("Specify the distance between columns (|||):")
         return True
 
     def _take_col_spacing(self, text: str) -> bool:
-        spacing = _number(text) or 0.0
+        spacing = self._spacing(text)
+        if spacing is None:
+            self.prompt("Specify the distance between columns (|||):")
+            return True
+        return self._place(spacing)
+
+    def _place(self, col_spacing: float) -> bool:
         self.ctx.execute(modify.array_rect(
             self._entities, self._rows, self._cols,
-            self._row_spacing, spacing))
+            self._row_spacing, col_spacing))
         self.ctx.echo(tr("{count} copies placed.",
                          count=(self._rows * self._cols - 1)
                          * len(self._entities)))
