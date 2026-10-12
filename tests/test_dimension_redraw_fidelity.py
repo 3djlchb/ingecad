@@ -260,3 +260,16 @@ def test_a_three_point_angular_measures_the_side_of_its_arc():
                                      p2=(0, 10)).render().dimension
         texts.append(_texts(document.doc, dim))
     assert texts == [["90°"], ["270°"]]
+
+
+def test_an_arc_length_has_no_text_prefix():
+    """DIMARCSYM 0 draws AutoCAD's arc symbol as geometry; ezdxf wrote
+    "( " before the number (266 of 402 corpus arc lengths)."""
+    document = Document.new()
+    document.doc.dimstyles.new("Arco", dxfattribs={
+        "dimarcsym": 0, "dimdec": 2, "dimzin": 0, "dimdsep": ord(".")})
+    msp = document.modelspace()
+    dim = msp.add_arc_dim_cra(center=(0, 0), radius=5, start_angle=0,
+                              end_angle=90, distance=1,
+                              dimstyle="Arco").render().dimension
+    assert _texts(document.doc, dim) == ["7.85"]

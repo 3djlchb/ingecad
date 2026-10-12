@@ -41,6 +41,7 @@ def apply() -> None:
     _patch_suppressed_dimension_line_arrows()
     _patch_two_line_angular_sector()
     _patch_three_point_angular_sector()
+    _patch_arc_length_symbol_text()
     _patch_dms_angular_text()
 
 
@@ -364,6 +365,32 @@ def _patch_three_point_angular_sector() -> None:
 
     __init__._ingecad_patch = True
     Angular3PDimension.__init__ = __init__
+
+
+def _patch_arc_length_symbol_text() -> None:
+    """No "( " in front of an arc length.
+
+    DIMARCSYM 0 (the default) puts AutoCAD's arc symbol before the number;
+    AutoCAD draws it as an ARC in the block, never as text. ezdxf wrote the
+    two characters "( " instead, so every arc-length dimension redrawn from
+    a colleague's plan read "( 6,62" for "6,62". The number now matches;
+    the little arc itself is not drawn yet.
+    """
+    from ezdxf.render.dim_curved import ArcLengthMeasurement
+
+    # its own flag: the inherited Measurement.__init__ already carries
+    # _ingecad_patch, which would make this return before patching
+    if getattr(ArcLengthMeasurement.__init__, "_ingecad_arc_prefix", False):
+        return
+    original = ArcLengthMeasurement.__init__
+
+    def __init__(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        self.has_arc_length_prefix = False
+
+    __init__._ingecad_patch = True
+    __init__._ingecad_arc_prefix = True
+    ArcLengthMeasurement.__init__ = __init__
 
 
 def _patch_single_vertex_leader() -> None:
