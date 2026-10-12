@@ -233,9 +233,12 @@ class PropertiesPanel(QWidget):
         if text == "":
             return
         if row.kind == "num":
+            # a decimal comma is how half the users type it ("0,0035" was
+            # dropped without a word)
             try:
-                value = float(text)
+                value = float(text.replace(",", "."))
             except ValueError:
+                self.window.command_line.echo(tr("Requires a numeric value."))
                 return
         else:
             value = text
