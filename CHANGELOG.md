@@ -27,13 +27,13 @@ ran into. Plus drawing tabs and associative dimensions.
 - **ROTATE, SCALE and MIRROR redraw a dimension** instead of turning its
   picture: readable text, the new length, copies where they belong.
 - **Dragging a dimension's text carries its line** (DIMTMOVE 0).
-- **DIMANGULAR as AutoCAD draws it**: live, on polylines, with extension
+- **DIMANGULAR, complete**: live, on polylines, with extension
   lines and degrees/minutes/seconds.
 - The **dimension style editor** writes only what you changed (OK no
   longer turned 0.0025 m text into 0.01), takes metric sizes, and shows
   every tab.
 
-### Commands as an AutoCAD user types them
+### Commands with their usual options
 - **MOVE, COPY, STRETCH**: Displacement, and Enter takes the first point
   as the displacement; **COPY** Exit and Undo; **ROTATE, SCALE** Copy;
   **UNDO** takes a count; **OOPS**; **TRIM, EXTEND** Fence, Crossing, Undo,
@@ -44,14 +44,14 @@ ran into. Plus drawing tabs and associative dimensions.
   **TEXT** ends on an empty line; **EXPLODE** shows a block's attribute
   definitions.
 - **DIMASSOC, CELTSCALE, DIMSCALE, LWEIGHT, LWDISPLAY, ZOOMFACTOR, SETVAR,
-  PROPERTIES, REDRAW, TEXTEDIT** and AutoCAD's aliases for them (R, CH,
+  PROPERTIES, REDRAW, TEXTEDIT** and their usual short aliases (R, CH,
   PR, ED…), which used to run other commands.
 - **Objects on a locked layer can no longer be erased or moved.**
 - **Undo gives back the whole object**: dimension blocks, polyline
   vertices, block attributes, hatch patterns.
 - **TRIM, EXTEND, BREAK, OFFSET and JOIN keep a contour's height and
   width**, and PEDIT Reverse its widths.
-- **Linetypes**: AutoCAD's Linetype Manager, -LINETYPE, acadiso.lin in
+- **Linetypes**: a Linetype Manager, -LINETYPE, the ISO linetypes in
   metric drawings, CELTSCALE and PSLTSCALE.
 
 ### Drawings in metres, on screen and on paper
