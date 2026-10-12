@@ -898,7 +898,7 @@ class TextTool(Tool):
     below; a new pick restarts there; Esc finishes.
     """
 
-    default_height = 2.5     # TEXTSIZE: session-sticky
+    default_height = 2.5     # TEXTSIZE when there is no drawing to ask
     last_rotation = 0.0
     _last_final = None       # (pos, height, rotation) of the last session
 
@@ -915,8 +915,20 @@ class TextTool(Tool):
         self._style = None
         style, fixed = self._style_info()
         self.ctx.echo(tr('Current text style: "{s}"  Text height: {h:g}',
-                         s=style, h=fixed or type(self).default_height))
+                         s=style, h=fixed or self._textsize()))
         self.prompt("Specify start point of text or [Justify/Style]:")
+
+    # -- TEXTSIZE: the drawing's own, as AutoCAD keeps it ----------------------
+    def _textsize(self) -> float:
+        """The default height: the drawing's $TEXTSIZE. A session-wide 2.5
+        made every first TEXT 2.5 m tall in a drawing in metres."""
+        return _drawing_textsize(self._document(), type(self).default_height)
+
+    def _set_textsize(self, value: float) -> None:
+        type(self).default_height = value
+        document = self._document()
+        if document is not None:
+            document.doc.header["$TEXTSIZE"] = float(value)
 
     # -- style plumbing --------------------------------------------------------
     def _document(self):
@@ -959,10 +971,10 @@ class TextTool(Tool):
             # current text style is annotative" (p. 1933): the model height
             # follows from the annotation scale when the text is created
             self.prompt("Specify paper text height <{h:g}>:",
-                        h=type(self).default_height)
+                        h=self._textsize())
         else:
             self.prompt("Specify height <{h:g}>:",
-                        h=type(self).default_height)
+                        h=self._textsize())
 
     def _rotation_prompt(self) -> None:
         self.prompt("Specify rotation angle of text <{r:g}>:",
@@ -987,7 +999,7 @@ class TextTool(Tool):
             self._await = None
             if self._align == "FIT":
                 self.prompt("Specify height <{h:g}>:",
-                            h=type(self).default_height)
+                            h=self._textsize())
                 return
             # ALIGNED: height derives from the fit; nominal for the entity
             span = max(math.dist(self._pos, self._p2), 1e-9)
@@ -1064,7 +1076,7 @@ class TextTool(Tool):
         if self._pos is None:
             return False
         if self._height is None:
-            value = _parse_number(text) if text else type(self).default_height
+            value = _parse_number(text) if text else self._textsize()
             if value is None or value <= 0:
                 return False
             self._take_height(value)
@@ -1082,7 +1094,7 @@ class TextTool(Tool):
     # angle (AutoCAD's "Specify height" / "Specify rotation angle").
     def _take_height(self, value: float) -> None:
         self._height = value
-        type(self).default_height = value
+        self._set_textsize(value)
         if self._align == "FIT":
             self._begin_typing()   # rotation comes from the two points
         else:
@@ -1189,8 +1201,22 @@ class TextTool(Tool):
         return (self._pos[0] + d * math.sin(r), self._pos[1] - d * math.cos(r))
 
 
+def _drawing_textsize(document, fallback: float) -> float:
+    try:
+        value = float(document.doc.header.get("$TEXTSIZE", fallback))
+    except Exception:  # noqa: BLE001 -- no drawing, or a broken header
+        return fallback
+    return value if value > 0 else fallback
+
+
 class MTextTool(Tool):
     default_height = 2.5
+
+    def _height(self) -> float:
+        services = self.ctx.services
+        window = getattr(services, "window", None) if services else None
+        return _drawing_textsize(getattr(window, "document", None),
+                                 type(self).default_height)
 
     def start(self) -> None:
         self.name = "MTEXT"
@@ -1208,13 +1234,13 @@ class MTextTool(Tool):
             services = self.ctx.services
             opener = getattr(services, "open_mtext_editor", None)
             if opener is not None:
-                opener(self._first, point, type(self).default_height)
+                opener(self._first, point, self._height())
                 self.ctx.finish()
                 return
             content = self.ctx.ask_text(tr("Enter text:"), "")
             if content:
                 self.ctx.execute(actions.add_mtext(
-                    self._first, point, content, type(self).default_height))
+                    self._first, point, content, self._height()))
             self.ctx.finish()
 
     def preview_segments(self, cursor: Point):
