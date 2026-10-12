@@ -93,14 +93,16 @@ def _preview_arrow(value: str):
 _PREVIEW_TEXT_HEIGHTS = 20.0
 
 
-def _preview_scale(attribs: dict) -> float:
+def _preview_scale(attribs: dict, fixed: float = 0.0) -> float:
     """How much to scale the 40-unit sample so this style reads.
 
-    Driven by the style's effective text height (``dimtxt`` × ``dimscale``),
-    with the arrow size as a fallback for a style that draws no text.
+    Driven by the style's effective text height (``dimtxt`` × ``dimscale``,
+    or the text style's fixed height, which DIMSCALE does not touch), with
+    the arrow size as a fallback for a style that draws no text.
     """
     scale = attribs.get("dimscale") or 1.0
-    height = (attribs.get("dimtxt") or 0.0) * scale
+    height = fixed if fixed and fixed > 0 else \
+        (attribs.get("dimtxt") or 0.0) * scale
     if height <= 0:
         height = (attribs.get("dimasz") or 0.0) * scale * 2.0
     if height <= 0:
@@ -154,7 +156,7 @@ def render_dim_preview(attribs: dict, w: int = 300, h: int = 190,
         # 40 units wide its text is a quarter of one per cent of the preview:
         # invisible. Twenty text heights across is what makes every style
         # legible while keeping its own text/arrow proportions intact.
-        s = _preview_scale(attribs)
+        s = _preview_scale(attribs, fixed)
         p = lambda x, y: (x * s, y * s)          # noqa: E731 - local shorthand
         msp.add_line(p(0, 0), p(40, 0), dxfattribs=white)
         msp.add_line(p(0, 0), p(14, 18), dxfattribs=white)
@@ -609,6 +611,10 @@ class DimStyleEditorDialog(QDialog):
         uv.addWidget(ang_group)
         uv.addStretch(1)
         self.tabs.addTab(units, tr("Primary Units"))
+        # every tab title in sight, as AutoCAD's dialog shows them: the
+        # pane was narrower than its tab bar and hid Primary Units behind
+        # scroll arrows (longer still in Spanish)
+        self.tabs.setMinimumWidth(self.tabs.tabBar().sizeHint().width() + 8)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
