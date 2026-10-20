@@ -2072,5 +2072,9 @@
   "Unknown variable name.": "Nombre de variable desconocido.",
   "Enter variable name:": "Indique el nombre de la variable:",
   "Select an annotation object:": "Designe un objeto de anotación:",
-  "That is not an annotation object.": "No es un objeto de anotación."
+  "That is not an annotation object.": "No es un objeto de anotación.",
+  "the DWG writer reported internal errors while packing the file: {detail}": "el escritor de DWG informó errores internos al armar el archivo: {detail}",
+  "some drawing objects did not survive the save ({before} → {after})": "algunos objetos del dibujo no sobrevivieron al guardado ({before} → {after})",
+  "could not re-open the saved DWG to verify it": "no se pudo volver a abrir el DWG guardado para verificarlo",
+  " and {count} more": " y {count} más"
 }

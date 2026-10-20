@@ -3,6 +3,35 @@
 IngeCAD embeds LibreDWG's `dwg2dxf`/`dxf2dwg` as satellite converters
 (`vendor/libredwg/bin`, gitignored).
 
+## 2026-10-19: no false errors saving a recent AutoCAD plan
+
+Appended to `current/ingecad-vendor-0.14.8597.patch`. Every AutoCAD 2013+
+plan saved as DWG ended in "Saved with a warning" (found by a plugin
+author filtering the log; three AutoCAD 2018 plans of the corpus: 16 to 37
+errors each).
+
+- **`add_HATCH` dropped a boundary line's end Y of exactly 0** (`&&
+  pair->value.d != 0.0` on code 21 only; code 11 never had it), logging
+  "Unknown DXF code 21 for HATCH". The point was zero-initialised anyway,
+  so the geometry was right and only the log lied; a spline fit point
+  with Y = 0 went the same way.
+- **DETAILVIEWSTYLE / SECTIONVIEWSTYLE read their colors only from an
+  R2004+ DXF** (`FIELD_CMC2004`). A DXF writer that keeps an object it
+  does not know -- ezdxf writing the R2000 intermediate of a 2018 plan --
+  passes the 62s on; the reader lost its place at the first one and the
+  style reached the DWG with its sizes and text style zeroed. Now the
+  color is read whenever it is there (`dxf_read_CMC` backs up if not).
+
+ODA as the judge: the styles of a 2018 plan saved by IngeCAD read back in
+ODA with the original's heights, offsets and text styles (zeroed before).
+Their colors still come back ByBlock instead of ByLayer, but already in
+`dwg2dxf`'s DXF of the original: a read-side bug, not this one. `make
+check` 286/0; `dwg_fuzz` 500 seeds identical, seed by seed. Of four AutoCAD 2018 plans,
+three now save without a warning; the fourth still logs "Illegal
+BLOCK_HEADER *Model_Space.entities[7]", which loses nothing there (ODA:
+7601 entities in, 7601 out, type by type) but is not understood yet, so
+it still warns. Upstream: not yet sent.
+
 ## 2026-10-19: justified text keeps its alignment point in the DWG
 
 Appended to `current/ingecad-vendor-0.14.8597.patch`. Reported by a user
