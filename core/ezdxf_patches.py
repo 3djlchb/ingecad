@@ -39,6 +39,7 @@ def apply() -> None:
     _patch_dimension_number_format()
     _patch_underscored_arrow_names()
     _patch_suppressed_dimension_line_arrows()
+    _patch_narrow_linear_dimension_text()
     _patch_two_line_angular_sector()
     _patch_three_point_angular_sector()
     _patch_arc_length_symbol_text()
@@ -270,6 +271,119 @@ def _patch_suppressed_dimension_line_arrows() -> None:
 
     __init__._ingecad_patch = True
     BaseDimensionRenderer.__init__ = __init__
+
+
+def _patch_narrow_linear_dimension_text() -> None:
+    """Text that does not fit between the extension lines goes BESIDE them.
+
+    DIMTMOVE 0 ("Beside the dimension line", the ISO-25 and AutoCAD
+    default) moves the text with the dimension line: outside, past the
+    second extension line (the first with DIMJUST 1), past the arrowhead
+    when that went outside too, at the same distance above the line as any
+    other dimension, and the dimension line runs on under it. ezdxf left
+    such text centred between the extension lines -- on top of them and of
+    the arrows -- and lifted it above their ends (DIMEXE more than every
+    other dimension's text): a 2.56 mm dimension of a tester's part read
+    "ahogada" and "despegada de la línea" next to well-placed ones (#102).
+
+    Placed by hand (a user location), over the line (DIMTMOVE 1/2) or forced
+    inside (DIMTIX), ezdxf's own layout stands.
+
+    Whether the text fits, and how far it then sits, takes its real width in
+    the dimension's text style, as AutoCAD measures it: ezdxf counted every
+    character as wide as it is tall ("2,56" = 10 mm at 2.5), which pushed
+    text out of spaces it fits in and left a gap before text set beside.
+    """
+    from ezdxf.render.dim_base import Measurement
+    from ezdxf.render.dim_linear import LinearDimension
+
+    if getattr(LinearDimension.default_text_location, "_ingecad_patch", False):
+        return
+    original_measurement_init = Measurement.__init__
+    estimate = Measurement.text_width
+
+    def measurement_init(self, dim_style, *args, **kwargs):
+        original_measurement_init(self, dim_style, *args, **kwargs)
+        font = None
+        try:
+            style = dim_style.doc.styles.get(self.text_style_name)
+            font = style.dxf.font or None
+        except Exception:
+            pass
+        self._ingecad_font = font
+
+    def text_width(self, text: str) -> float:
+        font = getattr(self, "_ingecad_font", None)
+        if font and text and "\\" not in text and "{" not in text:
+            try:
+                from ezdxf.fonts import fonts
+
+                return fonts.make_font(font, self.text_height,
+                                       self.text_width_factor).text_width(text)
+            except Exception:
+                pass
+        return estimate(self, text)       # stacked/formatted text: ezdxf's guess
+
+    Measurement.__init__ = measurement_init
+    Measurement.text_width = text_width
+    original_location = LinearDimension.default_text_location
+    original_extensions = LinearDimension.add_arrow_extension_lines
+    original_line = LinearDimension.add_dimension_line
+
+    def beside(self) -> bool:
+        m = self.measurement
+        try:
+            rule = int(self.dim_style.get("dimtmove", 0) or 0)
+        except (TypeError, ValueError):
+            rule = 0
+        return (m.text_is_outside and m.user_location is None
+                and m.text_halign in (0, 1, 2) and rule == 0)
+
+    def default_text_location(self):
+        self._ingecad_beside = None
+        if not beside(self):
+            return original_location(self)
+        m = self.measurement
+        first = m.text_halign == 1
+        anchor = self.dim_line_start if first else self.dim_line_end
+        out = -self.dim_line_vec if first else self.dim_line_vec
+        arrow = (self.arrows.arrow_size
+                 if self.arrows_outside and not self.arrows.has_ticks else 0.0)
+        near = arrow + m.text_gap
+        self._ingecad_beside = (first, arrow, near + self._total_text_width)
+        location = anchor + out * (near + self._total_text_width / 2.0)
+        return location + self.dim_line_vec.orthogonal().normalize(
+            m.text_vertical_distance())
+
+    def add_arrow_extension_lines(self):
+        side = getattr(self, "_ingecad_beside", None)
+        if side is None or self.measurement.vertical_placement == 0:
+            return original_extensions(self)
+        # the text side's tail is drawn, longer, by add_dimension_line
+        arrows = self.arrows
+        attr = "suppress1" if side[0] else "suppress2"
+        kept = getattr(arrows, attr)
+        setattr(arrows, attr, True)
+        try:
+            original_extensions(self)
+        finally:
+            setattr(arrows, attr, kept)
+
+    def add_dimension_line(self, start, end):
+        original_line(self, start, end)
+        side = getattr(self, "_ingecad_beside", None)
+        if side is None or self.measurement.vertical_placement == 0:
+            return              # centred text: no line through it
+        first, arrow, far = side
+        anchor = self.dim_line_start if first else self.dim_line_end
+        out = -self.dim_line_vec if first else self.dim_line_vec
+        self.add_line(anchor + out * arrow, anchor + out * far,
+                      dxfattribs=self.dimension_line.dxfattribs())
+
+    default_text_location._ingecad_patch = True
+    LinearDimension.default_text_location = default_text_location
+    LinearDimension.add_arrow_extension_lines = add_arrow_extension_lines
+    LinearDimension.add_dimension_line = add_dimension_line
 
 
 def _patch_two_line_angular_sector() -> None:
