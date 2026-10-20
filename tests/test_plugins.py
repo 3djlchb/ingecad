@@ -366,3 +366,24 @@ def test_the_frozen_build_carries_everything_the_bundled_plugins_import():
             f"{module}: only a plugin imports it; add it to the spec's hiddenimports")
     for module in sorted(std_imports):
         assert module in hidden, f"{module}: a plugin needs it and the spec does not freeze it"
+
+
+def test_a_toolbar_takes_separators_as_a_menu_does(qapp):
+    # SEPARATOR in a plugin's toolbar raised AttributeError ('str' has no
+    # 'icon') and the plugin failed to activate.
+    from core.plugins import SEPARATOR, PluginSpec, ToolbarItem
+
+    win = _window(qapp)
+    try:
+        win.plugins.loaded["ejemplo"].spec = PluginSpec(
+            id="ejemplo", name="Sample", commands={"HELLO": lambda ctx, *a: None},
+            toolbar=(ToolbarItem("Hello", "HELLO"), SEPARATOR,
+                     ToolbarItem("Again", "HELLO")))
+        win.plugins.set_toolbar_enabled("ejemplo", True)
+        assert win.plugins.activate("ejemplo")
+        bar = win._plugin_toolbars["ejemplo"]
+        assert [a.isSeparator() for a in bar.actions()] == [False, True, False]
+    finally:
+        win.plugins.set_toolbar_enabled("ejemplo", False)
+        win.plugins.deactivate("ejemplo")
+        win.close()

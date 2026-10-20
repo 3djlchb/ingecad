@@ -1910,12 +1910,16 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         from PySide6.QtGui import QIcon
         from PySide6.QtWidgets import QToolBar
 
+        from core.plugins import SEPARATOR
         from views.icons import command_icon
 
         bar = QToolBar(tr(spec.name), self)
         bar.setObjectName(f"plugin_{spec.id}_toolbar")
         bar.setMovable(True)
         for entry in spec.toolbar:
+            if entry == SEPARATOR:          # as in a plugin's menu
+                bar.addSeparator()
+                continue
             icon = QIcon(str(entry.icon)) if entry.icon else command_icon(entry.command)
             act = QAction(icon, tr(entry.label), self)
             act.setToolTip(f"{tr(entry.label)} ({entry.command})")

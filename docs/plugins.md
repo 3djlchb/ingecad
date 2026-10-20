@@ -64,7 +64,7 @@ with `i18n/es/ui.json` (`{"Say hello": "Saludar", ...}`) and, optionally,
 | `tools` | joins the one registry `ToolController.start_tool` reads, counted per plugin so several windows can share it; a name the core or another plugin owns refuses the whole activation |
 | `aliases` | added unless the user's `acad.pgp` or the core already answers to the token — an alias always wins over a command name, so a plugin can never take one |
 | `menu` | one top-level menu per plugin, between *Modify* and *Tools*; labels go through `tr()` when the menu is built |
-| `toolbar` | a `QToolBar` named `plugin_<id>_toolbar`, top area, movable |
+| `toolbar` | a `QToolBar` named `plugin_<id>_toolbar`, top area, movable; `SEPARATOR` between buttons as in a menu |
 | `options_page` | `callable(dialog, window) -> QWidget` added as a tab to Options after the core ones; if the widget has `apply()`, it runs with the core pages on OK and on Apply |
 | `i18n_dir` | `<dir>/<lang>/ui.json` strings merge after the app's catalog (the app wins a clash); `<dir>/<lang>/commands.json` adds localized command names, English always kept |
 | `requires` | module names; a missing one lists the plugin as *unavailable: needs X* instead of breaking start-up |
