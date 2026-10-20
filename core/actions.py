@@ -2867,9 +2867,10 @@ def apply_in_place(history, entities, mutate) -> None:
     the change joins the normal undo stack.
     """
     snap = SnapshotCommand(entities)
+    state = history.dimassoc_state()
     mutate()
     snap.commit(history.document)
-    history.record(snap)
+    history.record(snap, state)
 
 
 class SetPropertyCommand(Command):

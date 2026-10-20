@@ -465,6 +465,8 @@ class ToolController(QObject):
         #: Where the hot grip was grabbed: the base point of the grip edit,
         #: what ORTHO, POLAR and PERpendicular measure from (#60).
         self._grip_base = None
+        #: The associative dimensions at the grab (History.dimassoc_state)
+        self._grip_dimassoc = None
         self._regen_timer = QTimer(self)
         self._regen_timer.setSingleShot(True)
         self._regen_timer.setInterval(400)
@@ -3508,6 +3510,8 @@ class ToolController(QObject):
         if entity is None:
             return
         snap = SnapshotCommand([entity])   # captures the pre-grab state
+        # and the associative dimensions' (core.dimassoc), for the drop
+        self._grip_dimassoc = self.window.history.dimassoc_state()
         self._grip_drag = (handle, index, role, snap)
         self._grip_base = (gx, gy)
         # Hide the base-scene copy ONCE (a full-scene re-upload); from here
@@ -3632,7 +3636,9 @@ class ToolController(QObject):
         if entity is not None:
             apply_grip_edit(entity, index, role, (wx, wy))
             snap.commit(self.window.document)
-            self.window.history.record(snap)
+            self.window.history.record(snap, self._grip_dimassoc)
+            self._grip_dimassoc = None
+            self._show_reacted(snap)
             # grips/snap see the new shape; both caches are patched, not
             # rebuilt (a full rebuild froze the next pick on big files)
             self._drop_conflicting_stamps([handle])
