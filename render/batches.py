@@ -316,6 +316,11 @@ def _pack_standard(
     )
 
 
+#: The six corner offsets of a thick dot, in the triangle order of a segment
+_DOT_CORNERS = np.array([(-1, 1), (-1, -1), (1, 1), (1, 1), (-1, -1), (1, -1)],
+                        dtype=np.float32)
+
+
 def _pack_thick(
     buckets: list[Bucket], origin: tuple[float, float], extents,
     batch_name: str = "", handle_ranges: Optional[dict] = None,
@@ -342,22 +347,18 @@ def _pack_thick(
         seg = np.asarray(bucket.lines, dtype=np.float64).reshape(-1, 2, 2)
         d = seg[:, 1] - seg[:, 0]
         length = np.hypot(d[:, 0], d[:, 1])
-        ok = length > 0.0
-        # Owners are per segment, so they take the same two steps the geometry
-        # takes: drop the zero-length ones, then the grid permutation.
         owners = bucket.lines_owner
-        owner_arr = (np.asarray(owners, dtype=object)[ok]
+        owner_arr = (np.asarray(owners, dtype=object)
                      if owners and handle_ranges is not None else None)
-        seg, d, length = seg[ok], d[ok], length[ok]
-        if len(seg) == 0:
-            continue
         cells = _grid_cells(seg.reshape(-1, 2), extents, 2)
         order = np.argsort(cells, kind="stable")
         seg, d, length, cells = seg[order], d[order], length[order], cells[order]
         if owner_arr is not None:
             owner_arr = owner_arr[order]
 
-        normal = np.column_stack((-d[:, 1], d[:, 0])) / length[:, None]
+        dot = length == 0.0
+        normal = np.column_stack((-d[:, 1], d[:, 0])) / np.where(
+            dot, 1.0, length)[:, None]
         p0 = seg[:, 0] - (ox, oy)
         p1 = seg[:, 1] - (ox, oy)
         n_seg = len(seg)
@@ -367,6 +368,11 @@ def _pack_thick(
         for i, (p, sign) in enumerate(corners):
             verts["pos"][:, i] = p
             verts["normal"][:, i] = normal * sign
+        if dot.any():
+            # A zero-length segment is a linetype's dot (#87): a square as
+            # wide as the pen, its corners pushed out diagonally by the
+            # same half width the shader gives a line.
+            verts["normal"][dot] = _DOT_CORNERS
         verts["rgba"] = _color_u8(bucket.color)
         chunks.append(verts.reshape(-1))
 

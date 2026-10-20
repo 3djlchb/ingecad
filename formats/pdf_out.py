@@ -96,7 +96,6 @@ def build_graphics_scene(document, layout_name: str | None = None,
     ``ctb`` names the plot style table (see core.plotstyles); None takes the
     layout's own, "" plots with none.
     """
-    from ezdxf.addons.drawing.pyqt import PyQtBackend
     from PySide6.QtWidgets import QGraphicsScene
 
     from render.backend import TolerantFrontend, pick_layout
@@ -107,7 +106,7 @@ def build_graphics_scene(document, layout_name: str | None = None,
     else:
         layout, _name = pick_layout(document)
     scene = QGraphicsScene()
-    backend = PyQtBackend(scene)
+    backend = _plot_backend_class()(scene)
     # export_mode: render as plotted — layers with Plot off are skipped
     # (they still display on screen, exactly AutoCAD's Plot column).
     context = _plot_context(document.doc,
@@ -151,6 +150,79 @@ def build_graphics_scene(document, layout_name: str | None = None,
             _draw_viewport_borders(layout, context, backend)
     backend.finalize()
     return scene
+
+
+_PLOT_BACKEND = None
+
+
+def _plot_backend_class():
+    """ezdxf's PyQtBackend, plotting a linetype's dot as a dot (#87).
+
+    The dot of DASHDOT, CENTER or PHANTOM arrives as a zero-length line
+    (core.ezdxf_patches), which ezdxf turns into a "point" one DEVICE pixel
+    wide: a 0.02 mm speck at 1200 dpi, gone on paper. AutoCAD plots it as
+    round as the pen is wide, and so does :class:`_PenDot`.
+    """
+    global _PLOT_BACKEND
+    if _PLOT_BACKEND is not None:
+        return _PLOT_BACKEND
+    from ezdxf.addons.drawing.pyqt import PyQtBackend
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QBrush
+    from PySide6.QtWidgets import QAbstractGraphicsShapeItem
+
+    class _PenDot(QAbstractGraphicsShapeItem):
+        """A filled circle as wide as its pen: in device pixels while the
+        pen is cosmetic, in scene units once it is physical."""
+
+        def __init__(self, x: float, y: float, pen) -> None:
+            super().__init__()
+            self.location = QPointF(x, y)
+            self.setPen(pen)
+
+        def _radius(self, view_scale: float = 1.0) -> float:
+            pen = self.pen()
+            if pen.isCosmetic():
+                return max(pen.widthF(), 1.0) / 2.0 / view_scale
+            return pen.widthF() / 2.0
+
+        def boundingRect(self) -> QRectF:
+            r = 0.5 if self.pen().isCosmetic() else self._radius()
+            return QRectF(self.location.x() - r, self.location.y() - r,
+                          2 * r, 2 * r)
+
+        def paint(self, painter, option, widget=None) -> None:
+            from ezdxf.addons.drawing.pyqt import _get_x_scale
+            from PySide6.QtCore import Qt
+
+            r = self._radius(_get_x_scale(painter.transform()) or 1.0)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(self.pen().color()))
+            painter.drawEllipse(self.location, r, r)
+
+    class _PlotBackend(PyQtBackend):
+        def draw_line(self, start, end, properties) -> None:
+            if start.x == end.x and start.y == end.y:
+                self._dot(start, properties)
+            else:
+                super().draw_line(start, end, properties)
+
+        def draw_solid_lines(self, lines, properties) -> None:
+            rest = []
+            for s, e in lines:
+                if s.x == e.x and s.y == e.y:
+                    self._dot(s, properties)
+                else:
+                    rest.append((s, e))
+            if rest:
+                super().draw_solid_lines(rest, properties)
+
+        def _dot(self, at, properties) -> None:
+            item = _PenDot(at.x, at.y, self._get_pen(properties))
+            self._add_item(item, properties.handle)
+
+    _PLOT_BACKEND = _PlotBackend
+    return _PLOT_BACKEND
 
 
 def scene_extents(scene) -> QRectF:

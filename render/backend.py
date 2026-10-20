@@ -30,7 +30,7 @@ from ezdxf.math.triangulation import mapbox_earcut_2d
 import logging
 
 from core.document import Document
-from render.batches import Bucket, Scene, pack
+from render.batches import THIN_MAX_MM, Bucket, Scene, pack
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +149,9 @@ class VertexBackend(Backend):
 
     def draw_line(self, start: Vec2, end: Vec2, properties: BackendProperties) -> None:
         b = self._bucket(properties)
+        if start.x == end.x and start.y == end.y and b.lineweight <= THIN_MAX_MM:
+            self._dot(b, start)
+            return
         b.lines.extend((start.x, start.y, end.x, end.y))
         b.lines_owner.append(self._handle)
 
@@ -156,9 +159,22 @@ class VertexBackend(Backend):
         self, lines: Iterable[tuple[Vec2, Vec2]], properties: BackendProperties
     ) -> None:
         b = self._bucket(properties)
+        thin = b.lineweight <= THIN_MAX_MM
         for start, end in lines:
+            if thin and start.x == end.x and start.y == end.y:
+                self._dot(b, start)
+                continue
             b.lines.extend((start.x, start.y, end.x, end.y))
             b.lines_owner.append(self._handle)
+
+    def _dot(self, b: Bucket, at: Vec2) -> None:
+        """The 0.0 dash of a linetype -- DASHDOT's, CENTER's, PHANTOM's dot
+        -- arrives as a zero-length line, which GL rasterizes as nothing:
+        the dots were missing (#87, Rafael). A thin one is a one-pixel
+        point, as AutoCAD shows it; a thick one stays a segment and the
+        packer squares it to the pen's width (batches._pack_thick)."""
+        b.points.extend((at.x, at.y))
+        b.points_owner.append(self._handle)
 
     def draw_path(self, path: BkPath2d, properties: BackendProperties) -> None:
         b = self._bucket(properties)

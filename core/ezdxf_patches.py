@@ -44,6 +44,7 @@ def apply() -> None:
     _patch_three_point_angular_sector()
     _patch_arc_length_symbol_text()
     _patch_dms_angular_text()
+    _patch_linetype_dots()
 
 
 def dms_text(degrees: float, dimadec: int, dimdsep: str = ".",
@@ -1280,3 +1281,63 @@ def reading_angle(angle: float) -> float:
     elif a > 270.0:
         a -= 360.0
     return a
+
+
+def _patch_linetype_dots() -> None:
+    """A linetype's dot reaches the backend as a zero-length line (#87).
+
+    ezdxf stretches every element of a pattern to ``min_dash_length``, the
+    dots of DASHDOT, CENTER and PHANTOM included, so each dot was drawn as
+    a stroke shorter than a pixel: GL lit it or not depending on where it
+    fell, and Rafael found the dots "muy difíciles de ver". (Leaving the
+    dot at 0 does not do: ezdxf's C renderer drops zero-length dashes.)
+    Here what the renderer leaves at that length or shorter collapses to
+    its midpoint, a zero-length line, which the screen backend draws as a
+    pixel or a square of the pen's width and the plot as a pen-wide dot.
+    """
+    from ezdxf.addons.drawing.pipeline import LinetypeStage2d
+    from ezdxf.math import Vec2
+    from ezdxf.render import linetypes
+
+    if getattr(LinetypeStage2d.draw_line, "_ingecad_patch", False):
+        return
+
+    def dotted(stage, properties, lines):
+        pattern = properties.linetype_pattern
+        if not any(v == 0.0 for v in pattern[0::2]):
+            return lines
+        limit = stage.config.min_dash_length * stage.get_ltype_scale() * (1 + 1e-9)
+        out = []
+        for s, e in lines:
+            if (e - s).magnitude <= limit:
+                m = s.lerp(e)
+                out.append((m, m))
+            else:
+                out.append((s, e))
+        return out
+
+    original_line = LinetypeStage2d.draw_line
+    original_path = LinetypeStage2d.draw_path
+
+    def draw_line(self, start, end, properties):
+        if self.solid_lines_only or len(properties.linetype_pattern) < 2:
+            return original_line(self, start, end, properties)
+        renderer = linetypes.LineTypeRenderer(self.pattern(properties))
+        s, e = Vec2(start), Vec2(end)
+        self.next_stage.draw_solid_lines(
+            dotted(self, properties, list(renderer.line_segment(s, e))),
+            properties)
+
+    def draw_path(self, path, properties):
+        if self.solid_lines_only or len(properties.linetype_pattern) < 2:
+            return original_path(self, path, properties)
+        renderer = linetypes.LineTypeRenderer(self.pattern(properties))
+        vertices = path.flattening(self.config.max_flattening_distance, segments=16)
+        self.next_stage.draw_solid_lines(
+            dotted(self, properties,
+                   [(Vec2(s), Vec2(e)) for s, e in renderer.line_segments(vertices)]),
+            properties)
+
+    draw_line._ingecad_patch = True
+    LinetypeStage2d.draw_line = draw_line
+    LinetypeStage2d.draw_path = draw_path
