@@ -142,9 +142,16 @@ def _patch_fixed_height_dimension_text() -> None:
     19050 on the first grip drop. The authors' own blocks are the judge:
     all 130 such dimensions of nine corpus plans carry the bare height.
     Drop it if ezdxf stops scaling a fixed height.
+
+    An ANNOTATIVE text style is the exception: its height is a paper
+    height, so the dimension's scale multiplies it like DIMTXT -- held
+    bare, an annotative dimension kept a 2.5 text at 1:50 and 1:100 while
+    its arrows grew (#85, Rafael).
     """
     from ezdxf.render import dim_base
     from ezdxf.render.dim_base import Measurement
+
+    from core import annotative
 
     if getattr(Measurement.__init__, "_ingecad_fixed_height", False):
         return
@@ -155,7 +162,7 @@ def _patch_fixed_height_dimension_text() -> None:
         doc = dim_style.dimension.doc
         text_style = dim_base.get_text_style(doc, self.text_style_name)
         height = text_style.dxf.get("height", 0.0)
-        if height > 0.0:
+        if height > 0.0 and not annotative.is_annotative(text_style):
             self.text_height = height
         if self.measurement_factor < 0.0:
             # "negative values are applied to paper space only" (DIMLFAC):

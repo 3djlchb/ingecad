@@ -437,3 +437,46 @@ def test_existing_dimensions_become_annotative_from_properties(qapp):
     finally:
         win.document.dirty = False
         win.close()
+
+
+def test_an_annotative_text_style_scales_the_dimension_text():
+    # #85, Rafael (2026-10-12): in viewports at other scales the arrows of
+    # an annotative dimension scaled and its text did not. The dimension
+    # text was in an annotative text style with a (paper) height of 2.5,
+    # held at 2.5 in the model at every scale.
+    from core import actions
+
+    doc, _ = _doc("1:50")
+    document = Document(doc)
+    doc.header["$DIMSTYLE"] = "Standard"
+    style = doc.styles.add("Anno", font="arial.ttf")
+    style.dxf.height = 2.5
+    A.set_style_annotative(style, True)
+    dimstyle = doc.dimstyles.get("Standard")
+    dimstyle.dxf.dimtxsty = "Anno"
+    A.set_style_annotative(dimstyle, True)
+    cmd = actions.dim_linear((0, 0), (1000, 0), (500, 300))
+    cmd.do(document)
+    A.ObjectScaleCommand([cmd.dim], "1:100", add=True).do(document)
+
+    heights = {}
+    for rep in A.representations(cmd.dim):
+        (text,) = doc.blocks.get(rep.first(2)).query("MTEXT")
+        heights[rep.scale.name] = text.dxf.char_height
+    assert heights == {"1:50": pytest.approx(125.0), "1:100": pytest.approx(250.0)}
+
+
+def test_a_plain_fixed_height_style_still_sets_the_text_unscaled():
+    from core import actions
+
+    doc, _ = _doc("1:50")
+    document = Document(doc)
+    doc.header["$DIMSTYLE"] = "Standard"
+    doc.styles.add("Fixed", font="arial.ttf").dxf.height = 2.5
+    dimstyle = doc.dimstyles.get("Standard")
+    dimstyle.dxf.dimtxsty = "Fixed"
+    dimstyle.dxf.dimscale = 50.0
+    cmd = actions.dim_linear((0, 0), (1000, 0), (500, 300))
+    cmd.do(document)
+    (text,) = cmd.dim.get_geometry_block().query("MTEXT")
+    assert text.dxf.char_height == pytest.approx(2.5)
