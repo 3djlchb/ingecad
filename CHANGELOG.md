@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.8.1 — 2026-10-20
+
+- **A drawing opened from the file manager while IngeCAD runs becomes a
+  tab of its window**, instead of a second IngeCAD with a window of its
+  own. Several drawings opened together arrive as a tab each; IngeCAD
+  started from the menu with nothing to open still gets its own window.
+
 ## v0.6.8 — 2026-10-20
 
 What testers found while recording tutorials, fixed first; data that

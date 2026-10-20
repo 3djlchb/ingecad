@@ -82,6 +82,12 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.6.8.1" date="2026-10-20">
+      <description>
+        <p>A drawing opened from the file manager while IngeCAD runs becomes a tab of its window instead of a second window.</p>
+        <p xml:lang="es">Un plano abierto desde el gestor de archivos con IngeCAD ya abierto se abre como pestaña de su ventana, no en una segunda ventana.</p>
+      </description>
+    </release>
     <release version="0.6.8" date="2026-10-20">
       <description>
         <p>PEDIT Join turns lines and arcs into one polyline, and a user coordinate system (UCS) that typed points, the grid and the drawing commands follow. Narrow dimensions set their text beside them, status-bar toggles are remembered, justified text survives Save as DWG, dotted linetypes and hatch edits draw right, objects on hidden layers are no longer selected, and plots from a layout use its page setup.</p>
