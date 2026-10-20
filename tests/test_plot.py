@@ -230,3 +230,31 @@ def test_one_to_one_on_a_millimetre_plan_prints_true_size(app, tmp_path):
             row_dark = {"y": y, "xs": xs}
     width_mm = (max(row_dark["xs"]) - min(row_dark["xs"])) / px_per_mm
     assert width_mm == pytest.approx(100.0, abs=1.0)
+
+
+def test_plot_in_a_layout_starts_from_that_layouts_page_setup(app):
+    # PLOT in a layout opened on A4 landscape whatever the sheet, and the
+    # drawing unit was the model's: Extents at 1:1 on a metre plan plotted
+    # the sheet a thousand times too big.
+    from core import layouts as layout_ops
+    from core.i18n import tr
+    from views.print_dialog import PrintDialog
+
+    win = _window_with(6, 100.0)                    # a plan in metres
+    try:
+        name = win.document.doc.layouts.names_in_taborder()[1]
+        sheet = win.document.doc.layouts.get(name)
+        layout_ops.page_setup_command(
+            sheet, 297.0, 420.0, (5, 5, 5, 5), "ISO A3",
+            plot_type=layout_ops.PLOT_TYPE_EXTENTS).do(win.document)
+        win.switch_layout(name)
+        dialog = PrintDialog(win)
+        assert dialog.paper.currentText() == "A3"
+        assert dialog.orientation.currentData() is False       # portrait
+        assert dialog.area.currentData() == "extents"
+        assert dialog.units.currentText() == tr("Millimeters")
+        dialog.scale.setCurrentIndex(dialog.scale.findText("1:1"))
+        assert dialog._mm_per_unit() == 1.0
+    finally:
+        win.document.dirty = False
+        win.close()
