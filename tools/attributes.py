@@ -216,7 +216,7 @@ class AttDefCliTool(_TextPrompts, Tool):
                 value = float(text)
             except ValueError:
                 return False
-            self._rotation = value
+            self._rotation = value + self.ucs().degrees   # from the UCS's X
             self._create()
             return True
         return False
@@ -242,7 +242,7 @@ class AttDefCliTool(_TextPrompts, Tool):
             self._rotation_prompt()
             return
         if self._await == "rotation":
-            self._rotation = self._default_rotation()
+            self._rotation = self._default_rotation() + self.ucs().degrees
             self._create()
             return
         self.ctx.finish()
@@ -342,7 +342,9 @@ class AttDefCliTool(_TextPrompts, Tool):
             self.ctx.finish()
             return
         self.ctx.execute(command)
-        type(self)._last = (self._height, self._rotation or 0.0)
+        # the default offered next time is read in the UCS, as typed
+        type(self)._last = (self._height,
+                            (self._rotation or 0.0) - self.ucs().degrees)
         _remember(self, command)
         self.ctx.finish()
 

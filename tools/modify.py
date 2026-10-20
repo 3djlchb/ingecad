@@ -600,7 +600,7 @@ class ArrayTool(Tool):
     def _place(self, col_spacing: float) -> bool:
         self.ctx.execute(modify.array_rect(
             self._entities, self._rows, self._cols,
-            self._row_spacing, col_spacing))
+            self._row_spacing, col_spacing, self.ucs().angle))
         self.ctx.echo(tr("{count} copies placed.",
                          count=(self._rows * self._cols - 1)
                          * len(self._entities)))

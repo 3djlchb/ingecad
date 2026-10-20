@@ -1142,17 +1142,21 @@ class ArrayCommand(Command):
 
 
 def array_rect(entities, rows: int, columns: int,
-               row_spacing: float, column_spacing: float) -> ArrayCommand:
-    """Rows up and columns to the right from the original (-ARRAY, p.155)."""
+               row_spacing: float, column_spacing: float,
+               angle: float = 0.0) -> ArrayCommand:
+    """Rows up and columns to the right from the original (-ARRAY, p.155),
+    along the UCS's axes: ``angle`` is its X, radians (#91)."""
     from ezdxf.math import Matrix44
 
+    cx, cy = math.cos(angle), math.sin(angle)
     transforms = []
     for r in range(int(rows)):
         for c in range(int(columns)):
             if r == 0 and c == 0:
                 continue          # the original stays where it is
+            dx, dy = c * column_spacing, r * row_spacing
             transforms.append(
-                Matrix44.translate(c * column_spacing, r * row_spacing, 0))
+                Matrix44.translate(dx * cx - dy * cy, dx * cy + dy * cx, 0))
     return ArrayCommand(entities, transforms)
 
 

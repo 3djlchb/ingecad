@@ -1140,8 +1140,11 @@ class ToolController(QObject):
         builds its own command from what was typed."""
         from views.mtext_editor import MTextInPlaceEditor
 
-        top_left = (min(first[0], second[0]), max(first[1], second[1]))
-        width = abs(second[0] - first[0])
+        # the box is square to the UCS (#91): measured there, placed back
+        frame = self.current_ucs()
+        f_u, s_u = frame.to_ucs(*first), frame.to_ucs(*second)
+        top_left = frame.to_world(min(f_u[0], s_u[0]), max(f_u[1], s_u[1]))
+        width = abs(s_u[0] - f_u[0])
         document = self.window.document
         style = ""
         if document is not None:
@@ -1154,15 +1157,16 @@ class ToolController(QObject):
                 if new_width:
                     # The ruler's width arrow moved: keep the left edge, put
                     # the right one where it was dragged to.
-                    direction = 1.0 if second[0] >= first[0] else -1.0
-                    box_second = (first[0] + direction * new_width, second[1])
+                    direction = 1.0 if s_u[0] >= f_u[0] else -1.0
+                    box_second = frame.to_world(f_u[0] + direction * new_width,
+                                                s_u[1])
                 self._execute(actions.add_mtext(
                     first, box_second, content, char_height,
                     style=extras.get("style"),
                     attachment=extras.get("attachment") or 1,
                     line_spacing=extras.get("line_spacing"),
                     bg=extras.get("bg"),
-                    columns=extras.get("columns")))
+                    columns=extras.get("columns"), frame=frame))
             self.window.viewport.update()
 
         self._mtext_editor = MTextInPlaceEditor(
@@ -2322,20 +2326,21 @@ class ToolController(QObject):
             bool(mode & drafting.POLAR_ADDITIONAL))
 
     def _polar_base(self) -> float:
-        """Where polar angles are measured from: 0 (absolute, the UCS) or
-        the direction of the last segment drawn (POLARMODE bit 1) -- the
-        tool's last point and the one before it, as this controller saw
-        them go by."""
+        """Where polar angles are measured from, in world degrees: the UCS's
+        X axis (absolute) or the direction of the last segment drawn
+        (POLARMODE bit 1) -- the tool's last point and the one before it,
+        as this controller saw them go by."""
         from core import drafting
 
+        absolute = self.current_ucs().degrees     # the UCS's X, in the world
         if not (drafting.polar_mode() & drafting.POLAR_RELATIVE):
-            return 0.0
+            return absolute
         points = self._recent_points
         if len(points) >= 2:
             (x0, y0), (x1, y1) = points[-2], points[-1]
             if abs(x1 - x0) > 1e-12 or abs(y1 - y0) > 1e-12:
                 return math.degrees(math.atan2(y1 - y0, x1 - x0))
-        return 0.0
+        return absolute
 
     _recent_points: list = []
     #: AutoCAD's LASTPOINT: the last point entered, in any command. A new
@@ -3305,7 +3310,7 @@ class ToolController(QObject):
 
             tol = self._track_tolerance or self.px_to_space(SNAP_PX)
             locked = drafting.polar_lock(anchor, (wx, wy), self._polar_angles(),
-                                         tol, self._polar_base() + frame.degrees)
+                                         tol, self._polar_base())
             if locked is not None:
                 point, direction = locked
                 shown = round((direction - frame.degrees) % 360.0, 9)
@@ -3425,7 +3430,8 @@ class ToolController(QObject):
                     anchor = (sx, sy)
                     direction = math.atan2(py - sy, px - sx)
         else:
-            direction = 0.0     # no pointer yet: along +X, as AutoCAD
+            # no pointer yet: along the UCS's +X, as AutoCAD
+            direction = self.current_ucs().angle
         try:
             # dynamic input's relative default is for the SECOND point on:
             # the first is absolute (DYNPICOORDS), LASTPOINT or not
