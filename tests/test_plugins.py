@@ -387,3 +387,20 @@ def test_a_toolbar_takes_separators_as_a_menu_does(qapp):
         win.plugins.set_toolbar_enabled("ejemplo", False)
         win.plugins.deactivate("ejemplo")
         win.close()
+
+
+def test_a_plugin_tags_under_its_own_appid_beside_ingecads():
+    # core/xdata.py used to tell every plugin to write under INGECAD, where
+    # set_xdata replaced the survey tags of the same entity.
+    import ezdxf
+
+    from core.xdata import APPID, ensure_appid
+
+    doc = ezdxf.new("R2018")
+    point = doc.modelspace().add_point((1, 2))
+    ensure_appid(doc)
+    point.set_xdata(APPID, [(1000, "PTO"), (1070, 12)])
+    ensure_appid(doc, "GEOCAD")
+    point.set_xdata("GEOCAD", [(1000, "parcela")])
+    assert "GEOCAD" in doc.appids
+    assert [v for _c, v in point.get_xdata(APPID)] == ["PTO", 12]

@@ -79,9 +79,13 @@ They are the project's own, not extra ones:
    `core/actions.py`). Tools are thin shells over actions.
 2. **The ezdxf document is the model.** A plugin writes plain DXF entities
    in named layers; what it must remember (which 3DFACEs form one surface,
-   which UTM zone the drawing is in) goes into XDATA under the `INGECAD`
-   APPID (`core/xdata.py` owns the name and `ensure_appid`) or the root
-   dictionary's `INGECAD` dictionary. What several plugins need to agree on
+   which UTM zone the drawing is in) goes into XDATA. The bundled plugins
+   write under the `INGECAD` APPID (`core/xdata.py`); a third-party plugin
+   registers its own, `ensure_appid(doc, "MYPLUGIN")`, and never writes
+   under `INGECAD`: `set_xdata` replaces everything under an APPID, so it
+   would wipe the survey and terrain tags of the same entity. Drawing-wide
+   data goes in the root dictionary, under the plugin's own name too (the
+   `INGECAD` one holds the core's georeference). What several plugins need to agree on
    lives in the core, once: the drawing's UTM zone, hemisphere and datum (or
    its EPSG coordinate system) are
    `core/georef.py` (`read_georef`, `SetGeorefCommand`), declared by the
