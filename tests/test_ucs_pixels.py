@@ -48,13 +48,19 @@ def _type(win, *texts):
 
 
 def _red_axis_angle(viewport) -> float:
-    """The direction of the red X axis on screen, degrees, from a line fit."""
-    viewport.grabFramebuffer()
-    img = viewport.grabFramebuffer().convertToFormat(QImage.Format_RGB888)
-    rows = np.frombuffer(img.constBits(), np.uint8).reshape(
-        img.height(), img.bytesPerLine())[:, :img.width() * 3]
-    pixels = rows.reshape(img.height(), img.width(), 3).astype(int)
-    ys, xs = np.nonzero(np.all(np.abs(pixels - AXIS_X) <= 8, axis=2))
+    """The direction of the red X axis on screen, degrees, from a line fit.
+
+    Under Xvfb (CI, no window manager) the window can still be settling
+    when the first frame is grabbed: grab until the axis is there."""
+    for _ in range(50):
+        img = viewport.grabFramebuffer().convertToFormat(QImage.Format_RGB888)
+        rows = np.frombuffer(img.constBits(), np.uint8).reshape(
+            img.height(), img.bytesPerLine())[:, :img.width() * 3]
+        pixels = rows.reshape(img.height(), img.width(), 3).astype(int)
+        ys, xs = np.nonzero(np.all(np.abs(pixels - AXIS_X) <= 8, axis=2))
+        if len(xs) > 200:
+            break
+        QTest.qWait(40)
     assert len(xs) > 200, "the red axis is on screen"
     slope = np.polyfit(xs, ys, 1)[0]
     return -math.degrees(math.atan(slope))      # screen Y grows downwards
