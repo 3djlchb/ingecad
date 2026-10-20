@@ -751,7 +751,7 @@ class ToolController(QObject):
             return None
         tolerance = self._pick_tolerance
         if not self.cycling_on:                  # SELECTIONCYCLING off: the first answer, always
-            handles = self.index.pick_all(point, tolerance)
+            handles = self._shown(self.index.pick_all(point, tolerance))
             return handles[0] if handles else None
         cycle = self._cycle
         if cycle is not None:
@@ -764,7 +764,7 @@ class ToolController(QObject):
                 self._cycle = ((px, py), handles, position)
                 self._echo_cycle(handles, position)
                 return handles[position]
-        handles = self.index.pick_all(point, tolerance)
+        handles = self._shown(self.index.pick_all(point, tolerance))
         if not handles:
             self._cycle = None
             return None
@@ -840,28 +840,48 @@ class ToolController(QObject):
         self._sel_entities_cache = (key, out)
         return out
 
-    def _selectable(self, entities, include_off: bool = False):
+    def _selectable(self, entities, include_off: bool = False,
+                    include_locked: bool = False):
         """The handles of ``entities`` a pick may take: on a layer that is
         on, thawed and unlocked, and not isolated away. ``include_off``:
         the typed ALL, which AutoCAD documents as "except those objects on
-        frozen or on locked layers" -- a layer that is off is still in."""
+        frozen or on locked layers" -- a layer that is off is still in.
+        ``include_locked``: what a command's own selection takes, a locked
+        layer being refused later, when it would be modified."""
         document = getattr(self.window, "document", None)
         if document is None:
             return []
         layers = document.doc.layers
         hidden = getattr(document, "_isolated_hidden", None) or set()
+        refused: dict = {}                    # layer name -> left out?
         handles = []
         for entity in entities:
             handle = entity.dxf.get("handle")
             if not handle or handle in hidden:
                 continue
             name = entity.dxf.get("layer", "0")
-            layer = layers.get(name) if name in layers else None
-            if layer is not None and ((layer.is_off() and not include_off)
-                                      or layer.is_frozen() or layer.is_locked()):
-                continue
-            handles.append(handle)
+            out = refused.get(name)
+            if out is None:
+                layer = layers.get(name) if name in layers else None
+                out = refused[name] = layer is not None and (
+                    (layer.is_off() and not include_off) or layer.is_frozen()
+                    or (layer.is_locked() and not include_locked))
+            if not out:
+                handles.append(handle)
         return handles
+
+    def _shown(self, handles) -> list:
+        """``handles`` the user can see -- on a layer that is on and thawed,
+        not isolated away -- in their order. A click, a window or a crossing
+        only take what is on screen, as AutoCAD's do; the index holds every
+        entity, and a window over a layer turned off took its objects, which
+        Delete then erased (#97)."""
+        if not handles:
+            return []
+        db = self.window.document.doc.entitydb
+        return self._selectable(
+            [e for h in handles if (e := db.get(h)) is not None],
+            include_locked=True)
 
     def _unlocked_for(self, tool, entities) -> list:
         """``entities`` without those on a locked layer when ``tool`` edits
@@ -2616,14 +2636,14 @@ class ToolController(QObject):
                 ax, ay = self._window_anchor
                 self._window_anchor = None
                 rect = (min(ax, wx), min(ay, wy), max(ax, wx), max(ay, wy))
-                handles = self.index.crossing(rect)
+                handles = self._shown(self.index.crossing(rect))
                 entities = [e for h in handles
                             if (e := self.index.entity(h)) is not None
                             and e.is_alive]
                 self.tool.on_target_entities(entities, rect)
                 self.changed.emit()
                 return
-            if self.index.pick((wx, wy), self._pick_tolerance) is None:
+            if not self._shown(self.index.pick_all((wx, wy), self._pick_tolerance)):
                 # empty click: anchor a target window instead of "nothing"
                 self._window_anchor = (wx, wy)
                 self.changed.emit()
@@ -2998,7 +3018,8 @@ class ToolController(QObject):
             crossing = wx < ax if force is None else force == "C"
             if force is not None:
                 self._sel_force = None
-            hits = self.index.crossing(rect) if crossing else self.index.window(rect)
+            hits = self._shown(self.index.crossing(rect) if crossing
+                               else self.index.window(rect))
             if crossing and not shift:
                 self._crossing_rects.append(rect)
             if shift:
