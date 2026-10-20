@@ -18,8 +18,14 @@ def make_window(qapp):
     from views.main_window import MainWindow
 
     def make():   # conftest closes whatever a test leaves open
+        from PySide6.QtTest import QTest
+
         w = MainWindow()
         w.show()
+        # F-keys are window shortcuts: under Xvfb (CI, no window manager)
+        # the window turns active late and the first keys went nowhere
+        w.activateWindow()
+        QTest.qWaitForWindowActive(w, 5000)
         qapp.processEvents()
         return w
 
