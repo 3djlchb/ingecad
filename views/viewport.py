@@ -562,13 +562,16 @@ class Viewport(QOpenGLWidget):
         navigable.
         """
         boxes = []
-        if self._scene is not None:
-            if not self._scene.is_empty:
-                min_x, min_y, max_x, max_y = self._scene.extents
+        # What was drawn since the last regen lives in the overlay scene
+        # until the next bake; left out, Zoom Extents on a new drawing found
+        # nothing and framed the origin (#96, Rafael: "centra el 0,0").
+        for scene in (self._scene, self._overlay_scene):
+            if scene is not None and not scene.is_empty:
+                min_x, min_y, max_x, max_y = scene.extents
                 if max_x > min_x or max_y > min_y:
                     boxes.append((min_x, min_y, max_x, max_y))
-            if self._scene.paper is not None:
-                boxes.append(self._scene.paper["sheet"])
+        if self._scene is not None and self._scene.paper is not None:
+            boxes.append(self._scene.paper["sheet"])
         if boxes:
             return (min(b[0] for b in boxes), min(b[1] for b in boxes),
                     max(b[2] for b in boxes), max(b[3] for b in boxes))
