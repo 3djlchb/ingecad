@@ -2804,3 +2804,20 @@ BLOCK_HEADER, and the importer dropped both as "DXF artifacts".
  
      COMMON_ENTITY_HANDLE_DATA;
      FIELD_HANDLE (dimstyle, 5, 0);
+--- a/src/encode.c
++++ b/src/encode.c
+@@ -8154,8 +8154,13 @@
+   _obj->dataflags = 0xff;                                                     \
+   if (_obj->elevation != 0.0)                                                 \
+     _obj->dataflags &= ~1;                                                    \
++  /* the alignment point is what a non-left alignment places the text by,  \
++     even when it equals the insertion point (DXF writers that do not       \
++     compute the left baseline point write both alike): omitted, it reads   \
++     back as 0,0 and the text jumps to the origin */                        \
+   if (_obj->alignment_pt.x != _obj->ins_pt.x                                  \
+-      || _obj->alignment_pt.y != _obj->ins_pt.y)                              \
++      || _obj->alignment_pt.y != _obj->ins_pt.y                               \
++      || _obj->horiz_alignment != 0 || _obj->vert_alignment != 0)             \
+     _obj->dataflags &= ~2;                                                    \
+   if (_obj->oblique_angle != 0.0)                                             \
+     _obj->dataflags &= ~4;                                                    \

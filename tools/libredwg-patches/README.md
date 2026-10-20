@@ -3,6 +3,26 @@
 IngeCAD embeds LibreDWG's `dwg2dxf`/`dxf2dwg` as satellite converters
 (`vendor/libredwg/bin`, gitignored).
 
+## 2026-10-19: justified text keeps its alignment point in the DWG
+
+Appended to `current/ingecad-vendor-0.14.8597.patch`. Reported by a user
+(IngeCAD #95): a DXF opened and saved as DWG reopened with every centred
+text at 0,0.
+
+- **`dwg_set_dataflags` dropped the alignment point when it equalled the
+  insertion point** (bit 0x02 = "not stored"). ezdxf, like other DXF
+  writers that do not compute the left baseline point, writes a justified
+  TEXT/ATTDEF/ATTRIB with both points alike; the point a non-left
+  alignment places the text by was then left out, and an absent alignment
+  point reads back as 0,0 -- in LibreDWG and in ODA. The same macro already
+  keeps the horizontal and vertical alignments that use it; now a non-zero
+  alignment keeps the point too.
+
+ODA as the judge: 10 justifications (LEFT ... FIT) written by `dxf2dwg`
+read back in ODA at their alignment points, ODA recomputing the insertion
+as AutoCAD does (all but LEFT/ALIGNED/FIT at 0,0 before). `make check`
+286/0; `dwg_fuzz` 500 seeds identical, seed by seed. Upstream: not yet sent.
+
 ## 2026-10-11: 2-line angular dimensions keep their points
 
 Appended to `current/ingecad-vendor-0.14.8597.patch`. Found by re-rendering
