@@ -30,7 +30,7 @@ check` 286/0; `dwg_fuzz` 500 seeds identical, seed by seed. Of four AutoCAD 2018
 three now save without a warning; the fourth still logs "Illegal
 BLOCK_HEADER *Model_Space.entities[7]", which loses nothing there (ODA:
 7601 entities in, 7601 out, type by type) but is not understood yet, so
-it still warns. Upstream: not yet sent.
+it still warns. Upstream: #1464 (HATCH) and #1465 (view styles), 2026-10-20.
 
 ## 2026-10-19: justified text keeps its alignment point in the DWG
 
@@ -50,7 +50,7 @@ text at 0,0.
 ODA as the judge: 10 justifications (LEFT ... FIT) written by `dxf2dwg`
 read back in ODA at their alignment points, ODA recomputing the insertion
 as AutoCAD does (all but LEFT/ALIGNED/FIT at 0,0 before). `make check`
-286/0; `dwg_fuzz` 500 seeds identical, seed by seed. Upstream: not yet sent.
+286/0; `dwg_fuzz` 500 seeds identical, seed by seed. Upstream: #1463 (2026-10-20).
 
 ## 2026-10-11: 2-line angular dimensions keep their points
 
