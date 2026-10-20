@@ -1037,12 +1037,23 @@ def _entity_chain_rows(entity):
 
 def _chain(entities, tol: float = 1e-6):
     """Order the pieces end to end. None if there is a gap."""
-    remaining = [_entity_chain_rows(e) for e in entities]
-    chain = remaining.pop(0)
+    chain, used = _grow_chain(entities, tol)
+    if len(used) < len(entities):
+        return None
+    return [(x, y, 0.0, 0.0, bulge) for x, y, bulge in chain]
+
+
+def _grow_chain(entities, tol: float = 1e-6):
+    """Grow a chain from the first piece with every other piece that ends
+    where it ends. Returns ``(rows, used)``: the (x, y, bulge) rows and the
+    indices of the pieces it took, the first included."""
+    remaining = list(enumerate(_entity_chain_rows(e) for e in entities))
+    chain = remaining.pop(0)[1]
+    used = [0]
     progress = True
     while remaining and progress:
         progress = False
-        for index, rows in enumerate(remaining):
+        for index, (source, rows) in enumerate(remaining):
             head = (chain[0][0], chain[0][1])
             tail = (chain[-1][0], chain[-1][1])
             first = (rows[0][0], rows[0][1])
@@ -1062,11 +1073,10 @@ def _chain(entities, tol: float = 1e-6):
             else:
                 continue
             remaining.pop(index)
+            used.append(source)
             progress = True
             break
-    if remaining:
-        return None
-    return [(x, y, 0.0, 0.0, bulge) for x, y, bulge in chain]
+    return chain, used
 
 
 def _reverse_rows(rows):
@@ -1479,6 +1489,35 @@ def to_polyline(entity):
     rows = _entity_chain_rows(entity)
     piece = ("LWPOLYLINE", [(x, y, 0.0, 0.0, b) for x, y, b in rows], False)
     return ReplaceEntitiesCommand("PEDIT", [entity], [_factory_for(piece, entity)])
+
+
+def pedit_join(polyline, others, tol: float = 1e-6):
+    """PEDIT Join (reference p.1437): add to an open polyline the lines,
+    arcs and open polylines of ``others`` whose ends touch its ends, one
+    after the other. What does not touch is left alone, as AutoCAD does.
+
+    Returns ``(command, added)``; ``command`` is None when nothing joined.
+    The polyline keeps its properties; when the chain comes back to where
+    it started, the polyline closes.
+    """
+    if polyline.dxftype() != "LWPOLYLINE" or polyline.closed:
+        return None, 0
+    candidates = [e for e in others if e is not polyline and e.is_alive
+                  and e.dxftype() in ("LINE", "ARC", "LWPOLYLINE")
+                  and not (e.dxftype() == "LWPOLYLINE" and e.closed)]
+    rows, used = _grow_chain([polyline] + candidates, tol)
+    if len(used) == 1:
+        return None, 0
+    closed = False
+    if len(rows) > 2 and math.dist(rows[0][:2], rows[-1][:2]) <= tol:
+        rows = rows[:-1]
+        closed = True
+    points = [(x, y, 0.0, 0.0, bulge) for x, y, bulge in rows]
+    joined = [polyline] + [candidates[i - 1] for i in used[1:]]
+    command = ReplaceEntitiesCommand(
+        "PEDIT", joined, [_factory_for(("LWPOLYLINE", points, closed),
+                                       polyline)])
+    return command, len(used) - 1
 
 
 # -- LENGTHEN ------------------------------------------------------------------
