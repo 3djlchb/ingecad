@@ -642,11 +642,42 @@ def _dimension_rows(panel, e):
     return (tr("Dimension"), rows)
 
 
+def _set_attribute(panel, prop: str, value: str) -> None:
+    """Tag, prompt or value of the selected attributes, one undo step
+    (#88: a definition's tag, prompt and default could not be edited)."""
+    from core import attributes as att
+
+    if prop == "tag":
+        value = att.normal_tag(value)
+        if not value:
+            return
+    changes = [(e, prop, value) for e in panel._active()
+               if e.dxftype() in ("ATTRIB", "ATTDEF")
+               and (prop != "prompt" or e.dxftype() == "ATTDEF")]
+    if changes:
+        panel.window.tools._execute(att.EditAttribsCommand(changes))
+
+
 def _attrib_rows(panel, e):
-    """ATTRIB and ATTDEF carry a text style like any other text."""
-    rows = [
-        Row(tr("Tag"), "ro", lambda e: e.dxf.get("tag", "")),
-        Row(tr("Contents"), "ro", lambda e: e.dxf.get("text", "")),
+    """ATTRIB and ATTDEF carry a text style like any other text. A
+    definition edits its tag, prompt and default here, as AutoCAD's
+    Properties does; a reference's attribute its value."""
+    if e.dxftype() == "ATTDEF":
+        rows = [
+            Row(tr("Tag"), "str", lambda e: e.dxf.get("tag", ""),
+                lambda v: _set_attribute(panel, "tag", v)),
+            Row(tr("Prompt"), "str", lambda e: e.dxf.get("prompt", ""),
+                lambda v: _set_attribute(panel, "prompt", v)),
+            Row(tr("Value"), "str", lambda e: e.dxf.get("text", ""),
+                lambda v: _set_attribute(panel, "text", v)),
+        ]
+    else:
+        rows = [
+            Row(tr("Tag"), "ro", lambda e: e.dxf.get("tag", "")),
+            Row(tr("Value"), "str", lambda e: e.dxf.get("text", ""),
+                lambda v: _set_attribute(panel, "text", v)),
+        ]
+    rows += [
         Row(tr("Style"), "combo", lambda e: e.dxf.get("style", "Standard"),
             lambda v: panel._set_prop("style", v), _style_items(panel)),
         Row(tr("Height"), "num", lambda e: e.dxf.get("height", 1.0),

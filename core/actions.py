@@ -1155,6 +1155,12 @@ class CreateBlockCommand(Command):
             msp.unlink_entity(e)
         self.insert = msp.add_blockref(
             self.block_name, (self.base[0], self.base[1]))
+        # Its attributes, at their defaults: a reference carries its own
+        # ATTRIBs, and without them the definitions just packed vanished
+        # from the drawing -- Rafael's "Rafa" was nowhere to be seen (#88)
+        from core.attributes import attach_attribs
+
+        attach_attribs(self.insert)
         document.dirty = True
 
     def undo(self, document) -> None:

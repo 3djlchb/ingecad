@@ -1196,6 +1196,19 @@ class ToolController(QObject):
                           finish=lambda: None, services=self)
         return edit_attributes_of(Tool(ctx), entity)
 
+    def edit_attribute_definition(self, attdef) -> bool:
+        """DDEDIT on an attribute definition: the Edit Attribute Definition
+        dialog -- tag, prompt, default (p. 523) -- as one undoable step."""
+        from views.attribute_dialogs import EditAttDefDialog
+
+        dialog = EditAttDefDialog(self.window, attdef)
+        if dialog.exec():
+            command = dialog.command()
+            if command is not None:
+                self._execute(command)
+                self.changed.emit()
+        return True
+
     def open_text_editor_for(self, entity) -> bool:
         """Double-click on a text object: edit it in place. True if handled.
 
@@ -1212,6 +1225,8 @@ class ToolController(QObject):
         kind = entity.dxftype()
         if kind not in ("MTEXT", "TEXT", "ATTRIB", "ATTDEF"):
             return False
+        if kind == "ATTDEF":
+            return self.edit_attribute_definition(entity)
         insert = entity.dxf.insert
         if kind == "MTEXT":
             char_height = float(entity.dxf.char_height or 2.5)
