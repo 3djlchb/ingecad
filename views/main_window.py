@@ -2660,6 +2660,43 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
             return self.viewport.lwt_on
         return getattr(self.tools, f"{key}_on")
 
+    def _set_mode_state(self, key: str, value: bool) -> None:
+        if key == "grid":
+            self.viewport.grid_on = value
+        elif key == "lwt":
+            self.viewport.lwt_on = value
+        else:
+            setattr(self.tools, f"{key}_on", value)
+
+    #: The toggles remembered as plain on/off. OSNAP is not one of them: it
+    #: lives in its OSMODE bitcode with the running modes (osnap/osmode).
+    _PERSISTED_MODES = ("snap", "grid", "ortho", "polar", "otrack", "dyn", "lwt")
+
+    @staticmethod
+    def _mode_setting_key(key: str) -> str:
+        """Where a status-bar toggle is kept between sessions, per user, as
+        AutoCAD keeps them in the profile. Grid and lineweight share Options
+        > Display's keys: one question, one place."""
+        from views.options_dialog import SETTING_GRID, SETTING_LWT
+
+        return {"grid": SETTING_GRID, "lwt": SETTING_LWT}.get(
+            key, f"statusbar/{key}")
+
+    def _save_mode_states(self) -> None:
+        """Remember every toggle as it is now, whichever way it was flipped
+        (button, F-key, Ctrl shortcut, DSETTINGS, Options, LWDISPLAY).
+        Before the saved states are read back nothing is written, or the
+        defaults of a starting window would overwrite them."""
+        if not getattr(self, "_mode_states_loaded", False):
+            return
+        saved = self.__dict__.setdefault("_saved_mode_states", {})
+        settings = QSettings()
+        for key in self._PERSISTED_MODES:
+            value = bool(self._mode_state(key))
+            if saved.get(key) is not value:
+                settings.setValue(self._mode_setting_key(key), value)
+                saved[key] = value
+
     # -- status bar customization (AutoCAD's right-click / Customization) -------
     #: What the status bar shows out of the box: the classic drafting
     #: toggles and the space button. The rest is one right-click away, and
@@ -2783,14 +2820,18 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
 
     # -- running object snaps (the status-bar dropdown) ------------------------
     def _load_display_settings(self) -> None:
-        """Restore what Options > Display persists. Saving a toggle and then
-        losing it on the next start is worse than not offering it."""
-        from views.options_dialog import SETTING_GRID, SETTING_LWT, _bool_setting
+        """Restore the status-bar toggles as the user left them. Turning the
+        grid, polar and lineweight back on at every start was a tester's
+        daily chore (Rafael, 2026-10-18: only OSNAP was remembered). No
+        drawing overrides them: IngeCAD reads none of GRIDMODE, ORTHOMODE,
+        SNAPMODE... from a file, so the user's choice wins, as in AutoCAD's
+        profile."""
+        from views.options_dialog import _bool_setting
 
-        self.viewport.lwt_on = _bool_setting(SETTING_LWT,
-                                             bool(self.viewport.lwt_on))
-        self.viewport.grid_on = _bool_setting(SETTING_GRID,
-                                              bool(self.viewport.grid_on))
+        for key in self._PERSISTED_MODES:
+            self._set_mode_state(key, _bool_setting(
+                self._mode_setting_key(key), bool(self._mode_state(key))))
+        self._mode_states_loaded = True
         self._update_mode_buttons()
 
     def _osnap_settings_key(self) -> str:
@@ -2939,6 +2980,7 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
     def _update_mode_buttons(self) -> None:
         for key, b in self._mode_buttons.items():
             b.setChecked(self._mode_state(key))
+        self._save_mode_states()
 
     # -- document plumbing for the tools ---------------------------------------
     def _refresh_recent_menu(self) -> None:
