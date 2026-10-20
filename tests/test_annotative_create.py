@@ -254,8 +254,8 @@ def test_the_status_bar_control_sets_cannoscale_and_the_regen_follows(qapp):
 
         def height():
             scene = build_scene(win.document, "Model")
-            parts = [getattr(scene, b).data["pos"][lo:hi]
-                     for b, lo, hi in scene.handle_ranges.get(text.dxf.handle, [])]
+            parts = [getattr(scene, b).data["pos"][first:first + count]
+                     for b, first, count in scene.handle_ranges.get(text.dxf.handle, [])]
             ys = [float(p[1]) for part in parts for p in part]
             return max(ys) - min(ys)
 

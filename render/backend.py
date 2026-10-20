@@ -70,6 +70,22 @@ _CONSTRUCTION_TYPES = frozenset(("XLINE", "RAY"))
 CONSTRUCTION_SPAN = 10.0
 
 
+def _text_size_step(entity) -> int:
+    """A text's height as a power of two, for its bucket key.
+
+    Text under 2 px is culled per batch range by the range's AVERAGE glyph
+    height, and a layer's texts shared one batch whatever their size: a
+    title among a thousand small labels took their average and vanished
+    with them (GeoCad's review). Batched by step, the texts of a range are
+    within a factor of two of each other."""
+    try:
+        height = float(entity.dxf.char_height if entity.dxftype() == "MTEXT"
+                       else entity.dxf.height)
+    except Exception:            # noqa: BLE001 - no height: one step for all
+        return 0
+    return math.floor(math.log2(height)) if height > 0 else 0
+
+
 def _image_quad_corners(image_data) -> Optional[list]:
     """The image's WCS quad, WITHOUT touching the pixels.
 
@@ -99,12 +115,13 @@ class VertexBackend(Backend):
         self._kind = ""
         self._handle = None
         self._group = 0
+        self._size = 0
         # Raster IMAGEs: [{"pixels", "corners" (4 wcs xy), "handle", "group"}]
         self.images: list[dict] = []
-        # (kind, owner, group) per open entity. The frontend NESTS these: an
-        # INSERT is entered, then each of its sub-entities, up to three deep in
-        # real drawings.
-        self._open: list[tuple[str, str | None]] = []
+        # (kind, owner, group, size step) per open entity. The frontend NESTS
+        # these: an INSERT is entered, then each of its sub-entities, up to
+        # three deep in real drawings.
+        self._open: list[tuple] = []
         self.background: str | None = None
 
     def enter_entity(self, entity, properties) -> None:
@@ -125,8 +142,10 @@ class VertexBackend(Backend):
         # The DRAWORDER group follows the same outermost-owner attribution.
         group = (self._open[-1][2] if self._open
                  else self._order_groups.get(handle, 0))
-        self._open.append((kind, handle, group))
-        self._kind, self._handle, self._group = kind, handle, group
+        size = _text_size_step(entity) if kind == "T" else 0
+        self._open.append((kind, handle, group, size))
+        self._kind, self._handle, self._group, self._size = (
+            kind, handle, group, size)
 
     def exit_entity(self, entity) -> None:
         super().exit_entity(entity)
@@ -135,12 +154,12 @@ class VertexBackend(Backend):
         # Restore the enclosing entity's context rather than clearing it: a
         # parent keeps emitting primitives after a child exits, and those used
         # to come out unowned (and untyped, which also mis-keyed their bucket).
-        self._kind, self._handle, self._group = (
-            self._open[-1] if self._open else ("", None, 0))
+        self._kind, self._handle, self._group, self._size = (
+            self._open[-1] if self._open else ("", None, 0, 0))
 
     def _bucket(self, properties: BackendProperties) -> Bucket:
         key = (self._group, properties.layer, properties.color,
-               properties.lineweight, self._kind)
+               properties.lineweight, self._size, self._kind)
         bucket = self.buckets.get(key)
         if bucket is None:
             bucket = self.buckets[key] = Bucket(
