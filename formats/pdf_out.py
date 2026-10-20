@@ -242,6 +242,23 @@ def _plot_backend_class():
             if rest:
                 super().draw_solid_lines(rest, properties)
 
+        def draw_filled_paths(self, paths, properties) -> None:
+            # ezdxf outlines a filled path with the entity's pen: on paper
+            # every TrueType letter and solid hatch grew by its layer's
+            # lineweight and small text plotted as blots. AutoCAD gives
+            # TrueType text and solid fills no lineweight, like ezdxf's
+            # own filled polygons (a SOLID).
+            from ezdxf.addons.drawing.pyqt import _CosmeticPath
+            from ezdxf.npshapes import to_qpainter_path
+
+            paths = list(paths)
+            if not paths:
+                return
+            item = _CosmeticPath(to_qpainter_path(paths))
+            item.setPen(self._no_line)
+            item.setBrush(self._get_fill_brush(properties.color))
+            self._add_item(item, properties.handle)
+
         def _dot(self, at, properties) -> None:
             item = _PenDot(at.x, at.y, self._get_pen(properties))
             self._add_item(item, properties.handle)
