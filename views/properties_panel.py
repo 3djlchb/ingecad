@@ -531,11 +531,31 @@ def _hatch_rows(panel, e):
         Row(tr("Solid fill"), "ro",
             lambda e: tr("Yes") if e.dxf.solid_fill else tr("No")),
         Row(tr("Pattern angle"), "num", lambda e: e.dxf.get("pattern_angle", 0.0),
-            lambda v: panel._set_prop("pattern_angle", v)),
+            lambda v: _set_hatch_pattern(panel, "angle", v)),
         Row(tr("Pattern scale"), "num", lambda e: e.dxf.get("pattern_scale", 1.0),
-            lambda v: panel._set_prop("pattern_scale", v)),
+            lambda v: _set_hatch_pattern(panel, "scale", v)),
     ]
     return (tr("Pattern"), rows)
+
+
+def _set_hatch_pattern(panel, what: str, value: float) -> None:
+    """A hatch's pattern lines carry its scale and angle: setting the DXF
+    value alone redrew the pattern as it was (#86, Rafael). ezdxf scales or
+    turns the hatch's own lines, so a colleague's custom pattern stays
+    itself; the snapshot of _in_place restores them on undo."""
+    if what == "scale" and value <= 0:
+        panel.window.command_line.echo(tr("Requires a positive number."))
+        return
+
+    def mutate():
+        for e in panel._active():
+            if e.dxftype() != "HATCH":
+                continue
+            if what == "scale":
+                e.set_pattern_scale(value)
+            else:
+                e.set_pattern_angle(value)
+    panel._in_place(mutate)
 
 
 def _polyline_length(e) -> float:
