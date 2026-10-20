@@ -62,6 +62,12 @@ HATCHING_TIMEOUT = 5.0
 # (a cadastre: 43 M of 49 M vertices) and the viewport hides them when they
 # would be smaller than a few pixels.
 _TEXT_TYPES = frozenset(("TEXT", "MTEXT", "ATTRIB", "ATTDEF"))
+#: Infinite by definition: drawn far past the drawing (frontend_config) and
+#: left out of its extents (bucket kind "X", batches._world_extents)
+_CONSTRUCTION_TYPES = frozenset(("XLINE", "RAY"))
+#: How far a construction line reaches, in drawing diagonals (both halves of
+#: an XLINE together; a RAY all of it)
+CONSTRUCTION_SPAN = 10.0
 
 
 def _image_quad_corners(image_data) -> Optional[list]:
@@ -103,7 +109,9 @@ class VertexBackend(Backend):
 
     def enter_entity(self, entity, properties) -> None:
         super().enter_entity(entity, properties)
-        kind = "T" if entity.dxftype() in _TEXT_TYPES else ""
+        dxftype = entity.dxftype()
+        kind = ("T" if dxftype in _TEXT_TYPES
+                else "X" if dxftype in _CONSTRUCTION_TYPES else "")
         handle = getattr(entity.dxf, "handle", None)
         # Attribute the primitives to the OUTERMOST entity that has a handle.
         # Block content is drawn from virtual copies whose handle is None, and
@@ -1223,12 +1231,22 @@ def min_dash_length(tolerance: float, document=None) -> float:
     return min(max(tolerance, 1e-9) / abs(ltscale), 0.1)
 
 
+def construction_length(flatten: float) -> float:
+    """What ezdxf draws an XLINE (and a RAY) as: CONSTRUCTION_SPAN drawing
+    diagonals, read back from the flattening tolerance the regen derived
+    from that diagonal. ezdxf's own 20 units made them look like short
+    lines (#98: "se ven de tamaño finito"); far longer would cost float32
+    precision near the drawing and dashes by the million on a dashed axis."""
+    return max(flatten / FLATTEN_REL * CONSTRUCTION_SPAN, 20.0)
+
+
 def frontend_config(flatten: float, document=None) -> Configuration:
     config = Configuration(
         max_flattening_distance=flatten,
         min_hatch_line_distance=flatten * HATCH_DENSITY_REL,
         hatching_timeout=HATCHING_TIMEOUT,
         min_dash_length=min_dash_length(flatten, document),
+        infinite_line_length=construction_length(flatten),
     )
     size = point_size(document)
     return config if size is None else config.with_changes(pdsize=size)

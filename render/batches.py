@@ -63,7 +63,7 @@ class Bucket:
     layer: str
     color: str
     lineweight: float = 0.25                              # mm, resolved
-    kind: str = ""                                        # "T" = text glyphs
+    kind: str = ""          # "T" text glyphs, "TM" their masks, "X" XLINE/RAY
     # DRAWORDER group: -1 sent to back, +1 brought to front, 0 default. The
     # packer sorts buckets by their dict key, and the backend puts this group
     # FIRST in that key, so back draws under everything and front over.
@@ -452,6 +452,12 @@ def _world_extents(
             my = _HINT_MARGIN * (hy1 - hy0)
             lo_hi = (hx0 - mx, hy0 - my, hx1 + mx, hy1 + my)
 
+    # Construction lines reach far past the drawing on purpose and are no
+    # part of its extents (AutoCAD's Zoom Extents leaves them out too) --
+    # unless they are all there is.
+    finite = [b for b in buckets if b.kind != "X"]
+    if any(b.lines or b.triangles or b.points for b in finite):
+        buckets = finite
     for use_hint in (lo_hi is not None, False):
         min_x = min_y = np.inf
         max_x = max_y = -np.inf

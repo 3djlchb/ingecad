@@ -130,8 +130,11 @@ def build_graphics_scene(document, layout_name: str | None = None,
 
     size = point_size(document)
     # the paper shows what the screen cannot: a tenth of its tolerance
+    from render.backend import construction_length
+
     config = Configuration(min_dash_length=min_dash_length(
-        _flatten_distance(layout) * 0.1, document))
+        _flatten_distance(layout) * 0.1, document),
+        infinite_line_length=construction_length(_flatten_distance(layout)))
     if size is not None:
         config = config.with_changes(pdsize=size)
     TolerantFrontend(context, backend, config).draw_layout(
@@ -201,6 +204,28 @@ def _plot_backend_class():
             painter.drawEllipse(self.location, r, r)
 
     class _PlotBackend(PyQtBackend):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            #: entity types being drawn, innermost last
+            self._entering: list = []
+
+        def enter_entity(self, entity, properties) -> None:
+            super().enter_entity(entity, properties)
+            self._entering.append(entity.dxftype())
+
+        def exit_entity(self, entity) -> None:
+            super().exit_entity(entity)
+            if self._entering:
+                self._entering.pop()
+
+        def _add_item(self, item, entity_handle) -> None:
+            super()._add_item(item, entity_handle)
+            if self._entering and self._entering[-1] in ("XLINE", "RAY"):
+                # far past the drawing (render.backend.construction_length):
+                # not part of what "Extents" plots
+                item.setData(_CONSTRUCTION_ROLE, True)
+                self._scene._ingecad_construction = True
+
         def draw_line(self, start, end, properties) -> None:
             if start.x == end.x and start.y == end.y:
                 self._dot(start, properties)
@@ -225,9 +250,21 @@ def _plot_backend_class():
     return _PLOT_BACKEND
 
 
+#: QGraphicsItem data role marking an XLINE's or a RAY's strokes
+_CONSTRUCTION_ROLE = 0x0100 + 7
+
+
 def scene_extents(scene) -> QRectF:
-    """World-coordinate bounding rect of everything in the graphics scene."""
-    return scene.itemsBoundingRect()
+    """World-coordinate bounding rect of everything in the graphics scene
+    but construction lines, which reach far past the drawing and which
+    AutoCAD's Extents leaves out too (#98)."""
+    if not getattr(scene, "_ingecad_construction", False):
+        return scene.itemsBoundingRect()
+    rect = QRectF()
+    for item in scene.items():
+        if not item.data(_CONSTRUCTION_ROLE):
+            rect = rect.united(item.sceneBoundingRect())
+    return rect if not rect.isNull() else scene.itemsBoundingRect()
 
 
 _PT_TO_MM = 25.4 / 72.0
