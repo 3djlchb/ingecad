@@ -17,7 +17,8 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from core import actions
 from core import gc_guard
 from core import layouts as layout_ops
-from core.coords import CoordinateError, is_direct_distance, parse_point
+from core.coords import (CoordinateError, ParsedPoint, is_direct_distance,
+                         parse_point)
 from core.i18n import tr
 from core.select import GeometryIndex, apply_grip_edit, entity_grips
 from core.snap import SnapEngine, SnapHit
@@ -46,6 +47,7 @@ from tools.plot_window import PLOT_WINDOW_TOOL_CLASSES   # #52
 from tools.dim_commands import DIMCMD_TOOL_CLASSES   # #39
 from tools.xrefs import XREF_TOOL_CLASSES
 from tools.zoom_window import ZOOM_TOOL_CLASSES   # #80
+from tools.ucs_tool import UCS_TOOL_CLASSES         # #91
 from views.apertures import GRIP_PX, PICKBOX_DEFAULT, SNAP_PX
 
 # Overlay entities beyond this schedule an idle merge into the base scene
@@ -170,7 +172,7 @@ ALL_TOOL_CLASSES = {**TOOL_CLASSES, **EDIT_TOOL_CLASSES, **BLOCK_TOOL_CLASSES,
                     **BOUNDARY_TOOL_CLASSES, **DONUT_TOOL_CLASSES,
                     **SCALETEXT_TOOL_CLASSES, **DIMCMD_TOOL_CLASSES,
                     **XREF_TOOL_CLASSES, **PLOT_WINDOW_TOOL_CLASSES,
-                    **ZOOM_TOOL_CLASSES}
+                    **ZOOM_TOOL_CLASSES, **UCS_TOOL_CLASSES}
 
 
 #: name -> (owner, windows using it). The registry is process-wide and a
@@ -2305,9 +2307,10 @@ class ToolController(QObject):
         angles (Drafting Settings, Polar Tracking tab)."""
         from core import drafting
 
+        base = self.current_ucs().angle      # the UCS's axes, not the world's
         if self.polar_on and drafting.polar_mode() & drafting.POLAR_OTRACK_ALL:
-            return [math.radians(a) for a in self._polar_angles()]
-        return [0.0, math.pi / 2]
+            return [base + math.radians(a) for a in self._polar_angles()]
+        return [base, base + math.pi / 2]
 
     def _polar_angles(self) -> list:
         """POLARANG's multiples plus POLARADDANG when in use, degrees."""
@@ -2434,14 +2437,19 @@ class ToolController(QObject):
                 d = math.hypot(wx - ix, wy - iy)
                 if d <= 2 * tol and (best is None or d < best[0]):
                     best = (d, a[1], a[2], (ix, iy), b[1], b[2])
+        base = self.current_ucs().angle      # labels read in the UCS
+
+        def shown(a):
+            return f"{math.degrees(a - base) % 360.0:.0f}"
+
         if best is not None:
             _d, src, ang, point, other, other_ang = best
-            label = (f"{_track_label(src[2])}: <{math.degrees(ang):.0f}°, "
-                     f"{_track_label(other[2])}: <{math.degrees(other_ang):.0f}°")
+            label = (f"{_track_label(src[2])}: <{shown(ang)}°, "
+                     f"{_track_label(other[2])}: <{shown(other_ang)}°")
             return point, src, label
         near.sort(key=lambda n: n[0])
         _d, src, ang, point = near[0]
-        return point, src, f"{_track_label(src[2])}: <{math.degrees(ang):.0f}°"
+        return point, src, f"{_track_label(src[2])}: <{shown(ang)}°"
 
     # -- the rendered preview of what the next click creates --------------------
     _preview_key = None
@@ -3083,7 +3091,8 @@ class ToolController(QObject):
             except CoordinateError:
                 point = None
             if point is not None:
-                self._selection_click(point.x, point.y, False)
+                x, y = self.current_ucs().to_world(point.x, point.y)
+                self._selection_click(x, y, False)
                 return
         if option is None or document is None:
             echo(tr("*Invalid selection*"))
@@ -3259,10 +3268,14 @@ class ToolController(QObject):
             self._remember_through(self.snap_hit)
             return (self.snap_hit.x, self.snap_hit.y)
         self.track_hint = None
+        frame = self.current_ucs()
         if self.snap_on:
             step = self.snap_spacing()
             if step:
-                wx, wy = round(wx / step) * step, round(wy / step) * step
+                # the snap grid is the UCS's, as the grid on screen is
+                ux, uy = frame.to_ucs(wx, wy)
+                wx, wy = frame.to_world(round(ux / step) * step,
+                                        round(uy / step) * step)
         ortho = self.ortho_on != self.shift_held
         if ortho and self.tool is not None and not self.tool.ortho_applies():
             ortho = False
@@ -3274,10 +3287,13 @@ class ToolController(QObject):
                 self.track_hint = ((source[0], source[1]), point, label)
                 return point
         if anchor is not None and ortho:
+            # along the UCS's X or Y through the anchor
+            c, s = math.cos(frame.angle), math.sin(frame.angle)
             dx, dy = wx - anchor[0], wy - anchor[1]
-            if abs(dx) >= abs(dy):
-                return (wx, anchor[1])
-            return (anchor[0], wy)
+            along_x, along_y = dx * c + dy * s, -dx * s + dy * c
+            if abs(along_x) >= abs(along_y):
+                return (anchor[0] + along_x * c, anchor[1] + along_x * s)
+            return (anchor[0] - along_y * s, anchor[1] + along_y * c)
         if anchor is not None and self.polar_on:
             # Polar tracking, as AutoCAD's: the cursor is caught by an
             # alignment path only when it comes within the aperture of one,
@@ -3289,11 +3305,12 @@ class ToolController(QObject):
 
             tol = self._track_tolerance or self.px_to_space(SNAP_PX)
             locked = drafting.polar_lock(anchor, (wx, wy), self._polar_angles(),
-                                         tol, self._polar_base())
+                                         tol, self._polar_base() + frame.degrees)
             if locked is not None:
                 point, direction = locked
+                shown = round((direction - frame.degrees) % 360.0, 9)
                 self.track_hint = ((anchor[0], anchor[1]), point,
-                                   f"{_track_label('polar')}: <{direction:g}°")
+                                   f"{_track_label('polar')}: <{shown:g}°")
                 return point
         return (wx, wy)
 
@@ -3322,14 +3339,18 @@ class ToolController(QObject):
         units = units() if callable(units) else None
         x, y = self.resolved_point(*self._cursor)
         anchor = self.anchor_point()
+        frame = self.current_ucs()
         if anchor is not None:
             d = math.hypot(x - anchor[0], y - anchor[1])
-            ang = math.degrees(math.atan2(y - anchor[1], x - anchor[0])) % 360.0
+            ang = (math.degrees(math.atan2(y - anchor[1], x - anchor[0]))
+                   - frame.degrees) % 360.0
             if units is not None:
                 lines.append(f"{units.length(d)} < {units.angle(ang)}")
             else:
                 lines.append(f"{d:.4f} < {ang:.0f}")
-        elif units is not None:
+            return lines
+        x, y = frame.to_ucs(x, y)
+        if units is not None:
             lines.append(f"{units.length(x)}, {units.length(y)}")
         else:
             lines.append(f"{x:.4f}, {y:.4f}")
@@ -3408,8 +3429,14 @@ class ToolController(QObject):
         try:
             # dynamic input's relative default is for the SECOND point on:
             # the first is absolute (DYNPICOORDS), LASTPOINT or not
-            point = parse_point(stripped, anchor, direction,
+            # typed in the user's coordinates: anchor and pointer direction
+            # go into the UCS, the answer comes back to the world
+            frame = self.current_ucs()
+            point = parse_point(stripped, frame.to_ucs(*anchor),
+                                direction - frame.angle,
                                 relative_default=self.dyn_on and not first_point)
+            if point is not None and not frame.is_world:
+                point = ParsedPoint(*frame.to_world(point.x, point.y))
         except CoordinateError as exc:
             self.window.command_line.echo(tr("Invalid point: {error}",
                                              error=str(exc)))
@@ -3558,6 +3585,13 @@ class ToolController(QObject):
             # stay — the drag moves their quad surgically, no regen.
             self.window.viewport.show_image(handle)
         self._refresh_overlay()
+
+    def current_ucs(self):
+        """The UCS typed points, the readout, ORTHO, POLAR and the grid
+        follow (core/ucs.py): the model's, the world elsewhere."""
+        from core import ucs
+
+        return ucs.current(self.window.document)
 
     def anchor_point(self):
         """The point ORTHO, POLAR, tracking and PERpendicular measure from:

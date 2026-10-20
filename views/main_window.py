@@ -1688,6 +1688,15 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         item(tools_menu, tr("Plugins..."), self._cmd_plugins)
         item(tools_menu, tr("Load Application..."), self._cmd_appload)
         item(tools_menu, tr("Run Script..."), self._cmd_script)
+        # Tools > New UCS, as the classic menu has it (#91); each entry is
+        # UCS with its option typed, like AutoCAD's menu macros.
+        ucs_menu = tools_menu.addMenu(tr("New UCS"))
+        for label, option in ((tr("World"), "W"), (tr("Previous"), "P"),
+                              (tr("Origin"), "O"), (tr("3 Point"), ""),
+                              (tr("Object"), "OB"), (tr("Align to View"), "V"),
+                              (tr("Z"), "Z")):
+            ucs_menu.addAction(label,
+                               lambda o=option: self._ucs_from_menu(o))
         inquiry_menu = tools_menu.addMenu(tr("Inquiry"))
         cmd_item(inquiry_menu, tr("Distance"), "DIST", icon=False)
         cmd_item(inquiry_menu, tr("Area"), "AREA", icon=False)
@@ -3665,6 +3674,12 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
             self._properties_panel.refresh()
         self._refresh_props_toolbar()
 
+    def _ucs_from_menu(self, option: str) -> None:
+        """Tools > New UCS > ...: UCS, then the option, as if typed."""
+        self._invoke_command("UCS")
+        if option and self.tools.active():
+            self._on_command_submitted(option)
+
     def _invoke_command(self, name: str) -> None:
         """A toolbar button runs a command like typing it: any running tool
         is cancelled first (AutoCAD interrupts the current command)."""
@@ -4191,7 +4206,7 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
                      "LENGTHEN", "ALIGN", "BOUNDARY", "-BOUNDARY", "DONUT",
                      "OBJECTSCALE", "-OBJECTSCALE",
                      "AIOBJECTSCALEADD", "AIOBJECTSCALEREMOVE",
-                     "SCALETEXT", "XATTACH"):
+                     "SCALETEXT", "XATTACH", "UCS"):
             d.register(name, lambda *a, n=name: self.tools.start_tool(n))
         d.register("ADJUST", lambda *a: self.tools.start_tool("IMAGEADJUST"))
         d.register("CANNOSCALE", self._cmd_cannoscale)
@@ -5955,6 +5970,10 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
             point = layout_ops.paper_to_model(vp, wx, wy)
             if point is not None:
                 wx, wy = point
+        else:
+            from core import ucs
+
+            wx, wy = ucs.current(self.document).to_ucs(wx, wy)
         units = self.display_units()
         self._coords_label.setText(f"{units.length(wx)}, {units.length(wy)}")
 
