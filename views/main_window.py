@@ -384,6 +384,7 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         self._vp_gesture_timer.setInterval(700)
         self._vp_gesture_timer.timeout.connect(self._vp_gesture_commit)
         self._open_thread: QThread | None = None
+        self._pending_opens: list[Path] = []   # see open_paths
         self._open_worker: _OpenWorker | None = None
         self._opening_name = ""
         self.setWindowTitle(f"IngeCAD — {tr('Untitled')}")
@@ -6435,6 +6436,18 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
         self._autosave_arm()
         return True
 
+    def open_paths(self, paths) -> None:
+        """Several drawings, each in a tab of its own, one after another --
+        the file manager's double-clicks handed over by a second IngeCAD
+        (core/single_instance.py), or several files on the command line.
+        An open runs one at a time, so the rest wait their turn."""
+        self._pending_opens.extend(Path(p) for p in paths)
+        self._open_next_pending()
+
+    def _open_next_pending(self) -> None:
+        while self._pending_opens and self._open_thread is None:
+            self.open_path(self._pending_opens.pop(0))
+
     def open_path(self, path: Path, as_template: bool = False) -> None:
         """OS file associations, argv[1], and File > Open land here.
 
@@ -6577,3 +6590,4 @@ class MainWindow(DocumentTabsMixin, QMainWindow):
             self._open_thread.wait()
         self._open_thread = None
         self._open_worker = None
+        self._open_next_pending()     # the next drawing handed over, if any
