@@ -255,10 +255,19 @@ class PrintDialog(QDialog):
         # "1 mm = N units" is paper mm per drawing unit: find it in the list
         # for the drawing unit already chosen
         for i in range(1, self.scale.count()):
-            num, den = self.scale.itemData(i)
+            ratio = self.scale.itemData(i)
+            if not isinstance(ratio, tuple):
+                continue                        # "Custom": no ratio to compare
+            num, den = ratio
             if abs(self.units.currentData() * num / den - target) <= 1e-9 * max(target, 1.0):
                 self.scale.setCurrentIndex(i)
                 return
+        # not in the list (1:37, 1000 mm = 25 units...): the page setup's own
+        # ratio as the custom scale. Reaching "Custom" in the loop above used
+        # to raise, and PLOT in such a layout opened nothing at all.
+        self.custom_mm.setValue(float(dxf.get("scale_numerator", 1.0)))
+        self.custom_units.setValue(float(dxf.get("scale_denominator", 1.0)))
+        self.scale.setCurrentIndex(self.scale.findData("custom"))
 
     def _pick_window(self) -> None:
         idx = self.area.findData("window")
