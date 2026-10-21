@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.8.2 — 2026-10-21
+
+- **Plot opens again in a layout whose page setup has a scale outside
+  the list** (1:37, a custom ratio from another program...). The dialog
+  failed while it was being built and nothing appeared; it now opens on
+  Custom with that page setup's ratio.
+
 ## v0.6.8.1 — 2026-10-20
 
 - **A drawing opened from the file manager while IngeCAD runs becomes a

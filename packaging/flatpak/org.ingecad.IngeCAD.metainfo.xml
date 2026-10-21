@@ -82,6 +82,12 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.6.8.2" date="2026-10-21">
+      <description>
+        <p>Plot opens again in a layout whose page setup uses a scale outside the list.</p>
+        <p xml:lang="es">Trazar vuelve a abrirse en una presentación cuya configuración de página usa una escala que no está en la lista.</p>
+      </description>
+    </release>
     <release version="0.6.8.1" date="2026-10-20">
       <description>
         <p>A drawing opened from the file manager while IngeCAD runs becomes a tab of its window instead of a second window.</p>
